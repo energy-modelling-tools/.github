@@ -1,4 +1,4 @@
-# CCG Tools Organization
+#Energy Modelling tools
 
 Welcome to the **CCG Tools** (Climate Compatible Growth Tools) organization! This is a central hub for developing and managing introduction websites and documentation for various energy and climate modeling tools.
 
