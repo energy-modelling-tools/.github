@@ -1,0 +1,43 @@
+name: Issue Content Handler
+
+on:
+  issues:
+    types: [opened, edited, labeled]
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  prefill-content:
+    if: github.event_name == 'issues' && github.event.action == 'opened'
+    uses: energy-modelling-tools/.github/.github/workflows/prefill-issue-content.yml@main
+    secrets: inherit
+
+  prefill-yml:
+    if: github.event_name == 'issues' && github.event.action == 'opened'
+    uses: energy-modelling-tools/.github/.github/workflows/prefill-yml-content.yml@main
+    secrets: inherit
+
+  upload-images:
+    if: github.event_name == 'issues'
+    uses: energy-modelling-tools/.github/.github/workflows/issue-upload-image.yml@main
+    secrets: inherit
+
+  issue-to-pr:
+    if: github.event_name == 'issues' && github.event.action == 'edited'
+    uses: energy-modelling-tools/.github/.github/workflows/issue-to-pr.yml@main
+    secrets: inherit
+
+  update-yml:
+    if: github.event_name == 'issues' && github.event.action == 'edited'
+    uses: energy-modelling-tools/.github/.github/workflows/update-yml-with-images.yml@main
+    secrets: inherit
+
+  cleanup:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    uses: energy-modelling-tools/.github/.github/workflows/pr-close-cleanup.yml@main
+    secrets: inherit

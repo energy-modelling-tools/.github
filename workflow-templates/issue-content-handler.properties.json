@@ -1,0 +1,6 @@
+{
+    "name": "Issue Content Handler",
+    "description": "Handles issue-based content editing: prefills issues with file content, converts issues to pull requests, and processes image uploads. Requires the org-level reusable workflows in energy-modelling-tools/.github.",
+    "iconName": "octicon workflow",
+    "categories": ["content", "automation"]
+}
