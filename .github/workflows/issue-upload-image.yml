@@ -159,6 +159,7 @@ jobs:
           branch: "upload-images-issue-${{ github.event.issue.number }}"
           delete-branch: true
           labels: upload-image
+          add-paths: ${{ steps.extract.outputs.targetPath }}
 
       - name: Comment on issue
         if: success() && steps.extract.outputs.items != '[]'
