@@ -265,6 +265,7 @@ jobs:
           HAS_FRONTMATTER: ${{ steps.prepare.outputs.has_frontmatter }}
           FRONTMATTER: ${{ steps.prepare.outputs.frontmatter }}
           IS_YAML: ${{ steps.parse.outputs.isYaml }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         uses: actions/github-script@v7
         with:
           script: |
@@ -315,9 +316,30 @@ jobs:
 
               const https = require('https');
               const http = require('http');
+              const normalizeImageUrl = (raw) => String(raw || '')
+                .trim()
+                .replace(/^["'<>]+|["'<>]+$/g, '')
+                .replace(/&quot;/g, '');
+              const isExampleUrl = (url) => !url
+                || url.includes('...')
+                || /user-attachments\/?$/i.test(url)
+                || url.includes('example.com');
               const download = (url, destPath) => new Promise((resolve, reject) => {
-                const get = url.startsWith('https') ? https : http;
-                const req = get.get(url, (res) => {
+                let parsed;
+                try { parsed = new URL(url); } catch (err) { reject(err); return; }
+                const lib = parsed.protocol === 'https:' ? https : http;
+                const headers = {
+                  'User-Agent': 'energy-modelling-tools-image-sync',
+                  'Accept': '*/*'
+                };
+                if (process.env.GITHUB_TOKEN && /github\.com$/i.test(parsed.hostname)) {
+                  headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+                }
+                const req = lib.get({
+                  hostname: parsed.hostname,
+                  path: parsed.pathname + parsed.search,
+                  headers
+                }, (res) => {
                   if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
                     return download(res.headers.location, destPath).then(resolve).catch(reject);
                   }
@@ -350,14 +372,17 @@ jobs:
               if (!fs.existsSync(saveDir)) fs.mkdirSync(saveDir, { recursive: true });
 
               for (const section of Object.values(updates)) {
-                const imageRe = /!\[([^\]]*)\]\((https?:[^)\s]+)\)/g;
+                const imageRe = /!\[([^\]]*)\]\(\s*<?["']?(https?:[^)\s"'<>]+)["']?>?\s*\)/g;
                 let imgMatch;
                 const replacements = [];
                 while ((imgMatch = imageRe.exec(section.text)) !== null) {
                   const alt = imgMatch[1] || 'image';
-                  const url = imgMatch[2];
-                  const isRemote = /github\.com\/user-attachments|user-images\.githubusercontent\.com/i.test(url)
-                    || /^https?:\/\//.test(url) && !url.includes('/assets/img/');
+                  const url = normalizeImageUrl(imgMatch[2]);
+                  if (isExampleUrl(url)) {
+                    console.log(`⏭️ Skipping example image URL: ${url}`);
+                    continue;
+                  }
+                  const isRemote = /github\.com\/user-attachments|user-images\.githubusercontent\.com|githubusercontent\.com/i.test(url);
                   if (!isRemote) continue;
                   const base = slug(alt);
                   let dest = path.join(saveDir, `${base}.png`);
@@ -384,7 +409,7 @@ jobs:
 
               const editableToHtml = (text) => {
                 let s = escapeHtml(String(text || '').trim());
-                s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, '<img src="$2" alt="$1" class="img-fluid my-3" />');
+                s = s.replace(/!\[([^\]]*)\]\(\s*<?["']?([^)\s"'<>]+)["']?>?\s*\)/g, '<img src="$2" alt="$1" class="img-fluid my-3" />');
                 s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
                 s = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank">$1</a>');
                 s = s.replace(/\n/g, '<br>\n        ');

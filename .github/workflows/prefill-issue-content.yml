@@ -187,8 +187,9 @@ jobs:
                   '```text',
                   'Write the new paragraph here.',
                   '',
-                  'To add a picture, drag it into this box, then rename the `image` part:',
-                  '![short-name](https://github.com/user-attachments/...)',
+                  'To add a picture: drag the file into this box (inside the text fence).',
+                  'GitHub will insert something like ![image](https://github.com/user-attachments/assets/xxxx).',
+                  'Change `image` to a short filename. Do not put quotes around the URL.',
                   '```',
                   ''
                 ].join('\n');
@@ -199,7 +200,7 @@ jobs:
                   '> 2. Change only the words inside each ` ```text ` block (and `heading:` if needed)',
                   '> 3. Keep existing `#### Section:` ids as they are',
                   '> 4. Links: `[visible text](https://example.com)` · Bold: `**like this**`',
-                  '> 5. Images: drag into a `text` block, then write `![short-name](url)`',
+                  '> 5. Images: put the cursor **inside** a ` ```text ` block, drag the file in, then change `![image](url)` to `![short-name](url)` — no quotes around the URL',
                   '> 6. New section: fill in the optional block at the bottom',
                   '> 7. Click **Update comment** — a Pull Request will be created automatically',
                   '',
