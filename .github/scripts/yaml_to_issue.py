@@ -166,7 +166,9 @@ url: https://example.com
 > 1. Click **··· → Edit**
 > 2. Change the text inside each ` ```text ` block
 > 3. For photos/logos: put the cursor inside that event/partner block, drag the file in, rename `![image]` to a short filename, no quotes around the URL
-> 4. Click **Update comment** — a Pull Request is created
+> 4. **Delete an item:** remove that whole `#### Event:` / `#### Publication:` / `#### Partner:` / `#### Adjacent:` / `#### Link:` block
+> 5. **Reorder:** cut and paste whole blocks. Leave `new_*` templates unchanged to skip them
+> 6. Click **Update comment** — a Pull Request is created
 >
 > Images in EMP events are saved to `assets/img/EMP/`. Partner logos go to `assets/img/partners/`.
 """

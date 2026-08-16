@@ -49,9 +49,12 @@ jobs:
             let filePath = null;
             for (const pattern of filePatterns) {
               const match = body.match(pattern);
-              if (match && match[1] && (match[1].endsWith('.yml') || match[1].endsWith('.yaml'))) {
-                filePath = match[1].trim();
-                break;
+              if (match && match[1]) {
+                const candidate = match[1].trim().replace(/\s*\([^)]*\)\s*$/, '').trim();
+                if (candidate.endsWith('.yml') || candidate.endsWith('.yaml')) {
+                  filePath = candidate;
+                  break;
+                }
               }
             }
 

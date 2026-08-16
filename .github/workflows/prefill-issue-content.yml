@@ -66,7 +66,7 @@ jobs:
             for (const pattern of patterns) {
               const match = body.match(pattern);
               if (match && match[1]) {
-                filePath = match[1].trim();
+                filePath = match[1].trim().replace(/\s*\([^)]*\)\s*$/, '').trim();
                 break;
               }
             }
@@ -159,16 +159,27 @@ jobs:
               let cmsMatch;
               while ((cmsMatch = cmsRe.exec(content)) !== null) {
                 const before = content.slice(0, cmsMatch.index);
-                const headings = [...before.matchAll(/<h([2-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi)];
+                const headings = [...before.matchAll(/<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi)];
                 let heading = '';
+                let link = '';
                 if (headings.length) {
                   const last = headings[headings.length - 1];
                   const dist = cmsMatch.index - (last.index + last[0].length);
-                  if (dist < 500) heading = htmlToEditable(last[2]);
+                  if (dist < 500) {
+                    heading = htmlToEditable(last[2]);
+                    const beforeH = before.slice(0, last.index);
+                    const aTags = [...beforeH.matchAll(/<a\b[^>]*href=["']\s*([^"']+?)\s*["'][^>]*>/gi)];
+                    if (aTags.length) {
+                      const a = aTags[aTags.length - 1];
+                      const afterA = beforeH.slice(a.index + a[0].length);
+                      if (!afterA.includes('</a>')) link = a[1].trim();
+                    }
+                  }
                 }
                 cmsSections.push({
                   id: cmsMatch[1].trim(),
                   heading,
+                  link,
                   text: htmlToEditable(cmsMatch[2])
                 });
               }
@@ -183,7 +194,8 @@ jobs:
                 header = `\n\n---\n\n### 🧾 Editable sections from \`${filePath}\`\n\n`;
                 const existingBlocks = cmsSections.map((section) => {
                   const lines = [`#### Section: ${section.id}`];
-                  if (section.heading) lines.push(`heading: ${section.heading}`);
+                  lines.push(`heading: ${section.heading || ''}`);
+                  if (section.link) lines.push(`link: ${section.link}`);
                   lines.push('```text', section.text, '```', '');
                   return lines.join('\n');
                 }).join('\n');
@@ -191,6 +203,8 @@ jobs:
                   '### Add a new section (optional)',
                   '',
                   'Copy the block below to add another heading + paragraph. Change `new_section_id`. Duplicate the block to add more than one. Leave it unchanged to skip.',
+                  '',
+                  'To **delete** a section, remove that whole `#### Section:` block (the `heading:` line and its text box).',
                   '',
                   '#### Section: new_section_id',
                   'heading: New heading',
@@ -207,14 +221,16 @@ jobs:
                 instructions = [
                   '> 📝 **How to edit:**',
                   '> 1. Click the **three dots (···)** in the top right corner and choose **Edit**',
-                  '> 2. Change only the words inside each ` ```text ` block (and `heading:` if needed)',
-                  '> 3. Keep existing `#### Section:` ids as they are',
-                  '> 4. Links: `[visible text](https://example.com)` · Bold: `**like this**`',
-                  '> 5. Images: put the cursor **inside** a ` ```text ` block, drag the file in, then change `![image](url)` to `![short-name](url)` — no quotes around the URL',
-                  '> 6. New section: fill in the optional block at the bottom',
-                  '> 7. Click **Update comment** — a Pull Request will be created automatically',
+                  '> 2. `heading:` is the title on the page — edit it there',
+                  '> 3. Change the words inside each ` ```text ` block',
+                  '> 4. Keep existing `#### Section:` ids as they are',
+                  '> 5. **Delete a section:** remove that whole `#### Section:` block',
+                  '> 6. Links: `[visible text](https://example.com)` · Bold: `**like this**`',
+                  '> 7. Images: put the cursor **inside** a ` ```text ` block, drag the file in, then change `![image](url)` to `![short-name](url)` — no quotes around the URL',
+                  '> 8. New section: fill in the optional block at the bottom',
+                  '> 9. Click **Update comment** — a Pull Request will be created automatically',
                   '',
-                  '> Layout HTML is kept in the file. You are only editing wording, headings, links, and images.'
+                  '> Layout HTML is kept in the file. You are editing titles, wording, links, and images.'
                 ].join('\n');
               } else {
                 if (content.trim().startsWith('---')) {

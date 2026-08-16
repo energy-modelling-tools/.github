@@ -56,17 +56,21 @@ jobs:
             for (const pattern of filePatterns) {
               const match = body.match(pattern);
               if (match && match[1]) {
-                filePath = match[1].trim();
+                filePath = match[1].trim().replace(/\s*\([^)]*\)\s*$/, '').trim();
                 break;
               }
             }
             
             const sectionUpdates = {};
-            const sectionRe = /####\s*Section:\s*(\S+)[ \t]*\n(?:heading:[ \t]*(.*)[ \t]*\n)?```text\n([\s\S]*?)```/g;
+            const sectionRe = /####\s*Section:\s*(\S+)[ \t]*\n([\s\S]*?)```text\n([\s\S]*?)```/g;
             let sectionMatch;
             while ((sectionMatch = sectionRe.exec(body)) !== null) {
+              const meta = sectionMatch[2] || '';
+              const headingLine = meta.match(/^heading:[ \t]*(.*)$/m);
+              const linkLine = meta.match(/^link:[ \t]*(.*)$/m);
               sectionUpdates[sectionMatch[1].trim()] = {
-                heading: (sectionMatch[2] || '').trim(),
+                heading: headingLine ? headingLine[1].trim() : '',
+                link: linkLine ? linkLine[1].trim() : '',
                 text: sectionMatch[3].replace(/\n$/, '')
               };
             }
@@ -291,8 +295,8 @@ jobs:
               const updates = {};
               for (const [id, value] of Object.entries(rawUpdates)) {
                 updates[id] = (value && typeof value === 'object')
-                  ? { heading: value.heading || '', text: value.text || '' }
-                  : { heading: '', text: String(value || '') };
+                  ? { heading: value.heading || '', link: value.link || '', text: value.text || '' }
+                  : { heading: '', link: '', text: String(value || '') };
               }
               console.log('Applying CMS section updates:', Object.keys(updates));
 
@@ -308,9 +312,12 @@ jobs:
 
               const isPlaceholder = (id, heading, text) => {
                 const t = String(text || '').trim();
-                if (!t) return true;
+                if (id === 'new_section_id' || String(id).startsWith('new_')) {
+                  if (!t || t.startsWith('Write the new paragraph here')) return true;
+                  if ((!heading || heading === 'New heading') && t.startsWith('Write the new paragraph here')) return true;
+                  return false;
+                }
                 if (t.startsWith('Write the new paragraph here')) return true;
-                if (id === 'new_section_id' && (!heading || heading === 'New heading') && t.startsWith('Write the new paragraph here')) return true;
                 return false;
               };
 
@@ -417,6 +424,9 @@ jobs:
               };
 
               const rebuildSectionInner = (originalInner, editableText) => {
+                const originalTrim = String(originalInner || '').trim();
+                const textTrim = String(editableText || '').trim();
+                if (!originalTrim && !textTrim) return originalInner || '';
                 if (/<ul\b/i.test(originalInner)) {
                   const ulOpen = (originalInner.match(/<ul\b[^>]*>/i) || ['<ul>'])[0];
                   const items = String(editableText || '').split('\n')
@@ -437,6 +447,7 @@ jobs:
                     return `${before}${open}\n        ${html}\n      </p>${after}`;
                   }
                 }
+                if (!textTrim) return originalInner || '';
                 return `\n      <p class="alt-lead text-gray text-justify-between col-md-15 mx-auto">\n        ${html}\n      </p>\n      `;
               };
 
@@ -446,7 +457,43 @@ jobs:
               let idMatch;
               while ((idMatch = cmsIdRe.exec(original)) !== null) existingIds.add(idMatch[1]);
 
-              let next = original.replace(
+              const keptIds = Object.keys(updates).filter((id) => {
+                if (id === 'new_section_id' || String(id).startsWith('new_')) {
+                  return !isPlaceholder(id, updates[id].heading, updates[id].text);
+                }
+                return true;
+              });
+
+              const removeSection = (fileContent, sectionId) => {
+                const marker = '<!-- CMS:section id=' + sectionId + ' -->';
+                const idx = fileContent.indexOf(marker);
+                if (idx < 0) return fileContent;
+                const endMarker = '<!-- /CMS:section -->';
+                const endIdx = fileContent.indexOf(endMarker, idx);
+                if (endIdx < 0) return fileContent;
+                let from = idx;
+                const to = endIdx + endMarker.length;
+                const before = fileContent.slice(0, idx);
+                const hRe = /<h[1-6]\b[^>]*>[\s\S]*?<\/h[1-6]>/gi;
+                let last = null;
+                let hm;
+                while ((hm = hRe.exec(before))) last = hm;
+                if (last && (idx - (last.index + last[0].length) <= 500)) from = last.index;
+                return fileContent.slice(0, from) + fileContent.slice(to);
+              };
+
+              let next = original;
+              if (keptIds.length > 0) {
+                for (const id of [...existingIds]) {
+                  if (!keptIds.includes(id)) {
+                    next = removeSection(next, id);
+                    existingIds.delete(id);
+                    console.log('Removed CMS section', id);
+                  }
+                }
+              }
+
+              next = next.replace(
                 /<!--\s*CMS:section\s+id=([^\s]+)\s*-->([\s\S]*?)<!--\s*\/CMS:section\s*-->/g,
                 (full, id, inner) => {
                   if (!Object.prototype.hasOwnProperty.call(updates, id)) return full;
@@ -455,25 +502,84 @@ jobs:
                 }
               );
 
+              const headingInnerToHtml = (editable, originalTag) => {
+                const originalInner = (originalTag.match(/<h[1-6]\b[^>]*>([\s\S]*)<\/h[1-6]>/i) || ['', ''])[1];
+                const trimmed = String(editable || '').trim();
+                const mdLink = trimmed.match(/^\[([^\]]+)\]\((https?:[^)\s]+)\)$/);
+                const labelFrom = (s) => String(s || '').replace(/^\*\*|\*\*$/g, '').replace(/\*\*/g, '');
+                if (mdLink) {
+                  const label = labelFrom(mdLink[1]);
+                  if (/<a\b/i.test(originalInner)) {
+                    return originalInner.replace(/<a\b([^>]*)>[\s\S]*<\/a>/i, (_, attrs) => {
+                      let nextAttrs = attrs.replace(/href=["'][^"']*["']/, 'href="' + mdLink[2] + '"');
+                      if (!/href=/i.test(nextAttrs)) nextAttrs += ' href="' + mdLink[2] + '"';
+                      const inner = /<strong/i.test(originalInner)
+                        ? ('<strong>' + escapeHtml(label) + '</strong>')
+                        : escapeHtml(label);
+                      return '<a' + nextAttrs + '>' + inner + '</a>';
+                    });
+                  }
+                  return '<a href="' + mdLink[2] + '" target="_blank">' + escapeHtml(label) + '</a>';
+                }
+                const text = escapeHtml(labelFrom(trimmed));
+                if (/<a\b/i.test(originalInner)) {
+                  return originalInner.replace(/<a\b([^>]*)>([\s\S]*)<\/a>/i, (_, attrs, inner) => {
+                    const body = /<strong/i.test(inner) ? ('<strong>' + text + '</strong>') : text;
+                    return '<a' + attrs + '>' + body + '</a>';
+                  });
+                }
+                if (/<strong/i.test(originalInner)) return '<strong>' + text + '</strong>';
+                return text;
+              };
+
               const updateHeading = (fileContent, sectionId, newHeading) => {
                 if (!newHeading) return fileContent;
-                const marker = `<!-- CMS:section id=${sectionId} -->`;
+                const marker = '<!-- CMS:section id=' + sectionId + ' -->';
                 const idx = fileContent.indexOf(marker);
                 if (idx < 0) return fileContent;
                 const before = fileContent.slice(0, idx);
-                const h2Re = /<h[2-6]\b[^>]*>[\s\S]*?<\/h[2-6]>/gi;
+                const hRe = /<h[1-6]\b[^>]*>[\s\S]*?<\/h[1-6]>/gi;
                 let last = null;
                 let m;
-                while ((m = h2Re.exec(before))) last = m;
-                if (!last) return fileContent;
+                while ((m = hRe.exec(before))) last = m;
+                if (!last) {
+                  const inserted = '<h2 class="aboutpage-subtitle text-left mb-3 mt-lg-6">' + escapeHtml(newHeading) + '</h2>\n' + marker;
+                  return fileContent.slice(0, idx) + inserted + fileContent.slice(idx + marker.length);
+                }
                 if (idx - (last.index + last[0].length) > 500) return fileContent;
-                const replaced = last[0].replace(/>([\s\S]*)<\/h([2-6])>/, `>${escapeHtml(newHeading)}</h$2>`);
+                const innerHtml = headingInnerToHtml(newHeading, last[0]);
+                const replaced = last[0].replace(/>[\s\S]*<\/h([1-6])>/, (_, level) => '>' + innerHtml + '</h' + level + '>');
                 return fileContent.slice(0, last.index) + replaced + fileContent.slice(last.index + last[0].length);
+              };
+
+              const updateWrapLink = (fileContent, sectionId, newHref) => {
+                if (!newHref) return fileContent;
+                const marker = '<!-- CMS:section id=' + sectionId + ' -->';
+                const idx = fileContent.indexOf(marker);
+                if (idx < 0) return fileContent;
+                const before = fileContent.slice(0, idx);
+                const hRe = /<h[1-6]\b[^>]*>[\s\S]*?<\/h[1-6]>/gi;
+                let lastH = null;
+                let m;
+                while ((m = hRe.exec(before))) lastH = m;
+                const searchEnd = lastH ? lastH.index : idx;
+                const searchFrom = Math.max(0, searchEnd - 800);
+                const slice = fileContent.slice(searchFrom, searchEnd);
+                const aRe = /<a\b[^>]*href=["']\s*([^"']+)\s*["'][^>]*>/gi;
+                let lastA = null;
+                while ((m = aRe.exec(slice))) lastA = m;
+                if (!lastA) return fileContent;
+                const abs = searchFrom + lastA.index;
+                const newTag = lastA[0].replace(/href=["']\s*[^"']+\s*["']/, 'href="' + newHref + '"');
+                return fileContent.slice(0, abs) + newTag + fileContent.slice(abs + lastA[0].length);
               };
 
               for (const [id, section] of Object.entries(updates)) {
                 if (existingIds.has(id) && section.heading) {
                   next = updateHeading(next, id, section.heading);
+                }
+                if (existingIds.has(id) && section.link) {
+                  next = updateWrapLink(next, id, section.link);
                 }
               }
 

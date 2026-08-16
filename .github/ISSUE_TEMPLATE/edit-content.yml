@@ -1,19 +1,28 @@
 name: "Edit content (auto prefill)"
-description: "Edit an existing file from the repository"
+description: "Edit page text and headings. Pick a file — the issue is filled after you submit."
 title: "Edit request: "
 labels: ["content-edit"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        After you submit, each section is one box. `heading:` is the title on the page.
+
+        - Edit the title on the `heading:` line
+        - Edit the paragraph inside the `text` box
+        - **Delete a section:** remove that whole `#### Section:` block (the heading line and its text box)
   - type: dropdown
     id: file
     attributes:
       label: "Which file do you want to edit?"
-      description: "Select a file to edit"
+      description: "Filename stays the same. The note in brackets is what that file usually changes."
       options:
-        - "about.markdown"
-        - "application.markdown"
-        - "dataset.markdown"
-        - "get_involved.markdown"
-        - "learning_capacity.markdown"
+        - "index.html (homepage hero and cards)"
+        - "about.markdown (About page text)"
+        - "application.markdown (Applications page)"
+        - "dataset.markdown (datasets and tools)"
+        - "get_involved.markdown (Get Involved page)"
+        - "learning_capacity.markdown (Learning page)"
     validations:
       required: true
   - type: textarea
@@ -24,4 +33,3 @@ body:
       placeholder: "Optional comment..."
     validations:
       required: false
-
