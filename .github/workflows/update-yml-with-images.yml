@@ -19,76 +19,159 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const actor = context.actor || '';
+            const senderType = (context.payload.sender && context.payload.sender.type) || '';
+            if (actor === 'github-actions[bot]' || senderType === 'Bot') {
+              console.log('Skipping bot edit (prefill or automation)');
+              core.setOutput('should_run', 'false');
+              return;
+            }
+
             const labels = context.payload.issue.labels || [];
             const labelNames = labels.map(l => l.name);
-            console.log('Issue labels:', labelNames);
-            
             const body = context.payload.issue.body || '';
-            console.log('Issue body length:', body.length);
-            
-            // Check if this is a yml-edit issue
+
             const hasYmlEdit = labelNames.includes('yml-edit');
             const hasYamlFileField = body.includes('Which YAML file do you want to edit');
-            
             if (!hasYmlEdit && !hasYamlFileField) {
               console.log('Skipping: not a yml-edit issue');
               core.setOutput('should_run', 'false');
               return;
             }
-            
-            // Extract YAML file path
+
             const filePatterns = [
               /###\s*Which YAML file do you want to edit\?\s*\n\s*([^\n]+)/i,
               /###\s*Which YAML file do you want to edit\?\s*\n\n\s*([^\n]+)/i,
+              /Editable items from `([^`]+)`/i,
               /Prefilled YAML Content from `([^`]+)`/i,
               /Prefilled Content from `([^`]+)`/i
             ];
-            
             let filePath = null;
             for (const pattern of filePatterns) {
               const match = body.match(pattern);
-              if (match && match[1]) {
+              if (match && match[1] && (match[1].endsWith('.yml') || match[1].endsWith('.yaml'))) {
                 filePath = match[1].trim();
-                // Ensure it's a YAML file
-                if (filePath.endsWith('.yml') || filePath.endsWith('.yaml')) {
-                  break;
+                break;
+              }
+            }
+
+            const parseFields = (text) => {
+              const obj = {};
+              const outputs = [];
+              let mode = null;
+              const lines = String(text || '').replace(/\n$/, '').split('\n');
+              for (const raw of lines) {
+                const line = raw.replace(/\r$/, '');
+                if (/^outputs:\s*$/i.test(line)) { mode = 'outputs'; continue; }
+                if (/^image:\s*$/i.test(line)) { mode = 'image'; continue; }
+                if (/^logo:\s*$/i.test(line)) { mode = 'logo'; continue; }
+
+                if (mode === 'outputs') {
+                  const trimmed = line.trim();
+                  if (!trimmed || trimmed === '(none)') continue;
+                  const row = trimmed.match(/^[-*]\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*)$/);
+                  if (row) {
+                    outputs.push({
+                      country: row[1].trim(),
+                      flag: row[2].trim(),
+                      title: row[3].trim(),
+                      url: row[4].trim()
+                    });
+                  }
+                  continue;
                 }
+
+                if (mode === 'image' || mode === 'logo') {
+                  const img = line.match(/!\[([^\]]*)\]\(\s*<?["']?([^)\s"'<>]+)["']?>?\s*\)/);
+                  const trimmed = line.trim();
+                  if (img) obj[mode] = img[2].trim();
+                  else if (trimmed && !trimmed.startsWith('(') && !/^(drag |paste )/i.test(trimmed)) obj[mode] = trimmed;
+                  if (mode === 'image' && !obj.alt && img && img[1]) obj.alt = img[1].trim();
+                  continue;
+                }
+
+                const kv = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/);
+                if (!kv) continue;
+                const key = kv[1].toLowerCase();
+                const rest = kv[2].trim();
+                if (key === 'image' || key === 'logo' || key === 'outputs') {
+                  mode = key;
+                  if (rest && key !== 'outputs') {
+                    const img = rest.match(/!\[([^\]]*)\]\(\s*<?["']?([^)\s"'<>]+)["']?>?\s*\)/);
+                    obj[key] = img ? img[2].trim() : rest;
+                    if (key === 'image' && img && img[1] && !obj.alt) obj.alt = img[1].trim();
+                  }
+                  continue;
+                }
+                mode = null;
+                obj[key] = rest;
               }
-            }
-            
-            // Extract YAML content from the code block or YAML Content field
-            // Priority: YAML Content field > any yaml code block
-            let newContent = null;
-            
-            // First, try to extract from YAML Content field (form field)
-            const yamlContentFieldMatch = body.match(/###\s*YAML Content\s*\n\n?\s*```yaml\s*\n([\s\S]*?)\n```/i);
-            if (yamlContentFieldMatch && yamlContentFieldMatch[1]) {
-              newContent = yamlContentFieldMatch[1].trim();
-              console.log('✅ Extracted YAML content from YAML Content field');
-            } else {
-              // Fallback: try to find any yaml code block
-              const yamlMatch = body.match(/```yaml\s*\n([\s\S]*?)\n```/);
-              if (yamlMatch && yamlMatch[1]) {
-                newContent = yamlMatch[1].trim();
-                console.log('✅ Extracted YAML content from yaml code block');
+              if (outputs.length) obj.outputs = outputs;
+              return obj;
+            };
+
+            const collect = (kind) => {
+              const re = new RegExp('####\\s*' + kind + ':\\s*(.*)\\n```text\\n([\\s\\S]*?)```', 'gi');
+              const items = [];
+              let match;
+              while ((match = re.exec(body)) !== null) {
+                items.push({ heading: (match[1] || '').trim(), fields: parseFields(match[2]) });
               }
+              return items;
+            };
+
+            const isUnchangedTemplate = (kind, heading, fields) => {
+              const title = fields.title || '';
+              const url = fields.url || '';
+              const description = fields.description || '';
+              const image = fields.image || '';
+              const logo = fields.logo || '';
+              if (kind === 'Event' && heading === 'new_event') {
+                return title === 'EMP-A 2026 - City, Country'
+                  || description.startsWith('Write a short description')
+                  || image.includes('paste-or-drag');
+              }
+              if (kind === 'Adjacent' && heading === 'new_adjacent') {
+                return url === 'https://example.com' || title === 'Training title';
+              }
+              if (kind === 'Publication' && heading === 'new_publication') {
+                return title === 'New paper title';
+              }
+              if (kind === 'Partner' && heading === 'new_partner') {
+                return url === 'https://example.org' || logo.includes('paste-or-drag');
+              }
+              if (kind === 'Link' && heading === 'new_link') {
+                return url === 'https://example.com' || title === 'Bluesky' || fields.name === 'Bluesky';
+              }
+              return false;
+            };
+
+            const events = collect('Event')
+              .filter((item) => !isUnchangedTemplate('Event', item.heading, item.fields))
+              .map((item) => item.fields);
+            const adjacent = collect('Adjacent')
+              .filter((item) => !isUnchangedTemplate('Adjacent', item.heading, item.fields))
+              .map((item) => item.fields);
+            const publications = collect('Publication')
+              .filter((item) => !isUnchangedTemplate('Publication', item.heading, item.fields))
+              .map((item) => item.fields);
+            const partners = collect('Partner')
+              .filter((item) => !isUnchangedTemplate('Partner', item.heading, item.fields))
+              .map((item) => item.fields);
+            const links = collect('Link')
+              .filter((item) => !isUnchangedTemplate('Link', item.heading, item.fields))
+              .map((item) => item.fields);
+
+            const hasBlocks = events.length + adjacent.length + publications.length + partners.length + links.length > 0;
+
+            let yamlContent = '';
+            if (!hasBlocks) {
+              const yamlField = body.match(/###\s*YAML Content\s*\n\n?\s*```yaml\s*\n([\s\S]*?)\n```/i);
+              const yamlFence = body.match(/```yaml\s*\n([\s\S]*?)\n```/);
+              yamlContent = ((yamlField && yamlField[1]) || (yamlFence && yamlFence[1]) || '').trim();
             }
-            
-            // Extract image URLs from the issue
-            const imageUrls = [];
-            // Match Markdown image format: ![alt](url)
-            const imagePattern = /!\[.*?\]\((https?:\/\/[^\s\)]+\.(jpg|jpeg|png|gif|svg|webp))\)/gi;
-            let imageMatch;
-            while ((imageMatch = imagePattern.exec(body)) !== null) {
-              imageUrls.push(imageMatch[1]);
-            }
-            // Match GitHub automatically uploaded images
-            const githubImagePattern = /https:\/\/user-images\.githubusercontent\.com\/[^\s\)]+/g;
-            const githubImages = body.match(githubImagePattern) || [];
-            imageUrls.push(...githubImages);
-            
+
             if (!filePath) {
-              console.error('No YAML file path found');
               await github.rest.issues.createComment({
                 ...context.repo,
                 issue_number: context.issue.number,
@@ -97,127 +180,66 @@ jobs:
               core.setOutput('should_run', 'false');
               return;
             }
-            
-            if (!newContent) {
-              console.error('No YAML content found');
+
+            if (!hasBlocks && !yamlContent) {
               await github.rest.issues.createComment({
                 ...context.repo,
                 issue_number: context.issue.number,
-                body: '❌ Cannot find YAML content. Please make sure to edit the content in the yaml code block.'
+                body: '❌ Cannot find editable YAML items. Edit a `text` block (or a `yaml` block), then save.'
               });
               core.setOutput('should_run', 'false');
               return;
             }
-            
-            console.log('✅ YAML file path:', filePath);
-            console.log('✅ YAML content length:', newContent.length);
-            console.log('✅ Found images:', imageUrls.length);
-            if (imageUrls.length > 0) {
-              console.log('✅ Image URLs:', imageUrls);
+
+            const payload = {
+              file: filePath,
+              events,
+              adjacent,
+              publications,
+              partners,
+              links
+            };
+            console.log('YAML file path:', filePath);
+            console.log('Edit mode:', hasBlocks ? 'blocks' : 'raw-yaml');
+            if (hasBlocks) {
+              console.log('Events:', events.length, 'Adjacent:', adjacent.length, 'Publications:', publications.length, 'Partners:', partners.length, 'Links:', links.length);
             }
-            
-            const imageUrlsJson = JSON.stringify(imageUrls);
-            console.log('✅ Image URLs JSON:', imageUrlsJson);
-            
+
             core.setOutput('filePath', filePath);
-            core.setOutput('yamlContent', newContent);
-            core.setOutput('imageUrls', imageUrlsJson);
-            core.setOutput('imageUrlsCount', imageUrls.length.toString());
+            core.setOutput('editMode', hasBlocks ? 'blocks' : 'raw');
+            core.setOutput('payloadB64', Buffer.from(JSON.stringify(payload), 'utf8').toString('base64'));
+            core.setOutput('yamlContent', hasBlocks ? '' : yamlContent);
             core.setOutput('should_run', 'true');
 
       - name: Checkout repository
         if: steps.parse.outputs.should_run == 'true'
         uses: actions/checkout@v4
 
-      - name: Download and save images
-        if: steps.parse.outputs.should_run == 'true' && steps.parse.outputs.imageUrlsCount != '0'
-        id: images
-        env:
-          IMAGE_URLS: ${{ steps.parse.outputs.imageUrls }}
-        uses: actions/github-script@v7
+      - name: Checkout YAML helper scripts
+        if: steps.parse.outputs.should_run == 'true' && steps.parse.outputs.editMode == 'blocks'
+        uses: actions/checkout@v4
         with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-            const https = require('https');
-            const http = require('http');
-            
-            const imageUrls = JSON.parse(process.env.IMAGE_URLS || '[]');
-            const savedImages = [];
-            
-            for (const imageUrl of imageUrls) {
-              try {
-                // Extract the file name from the URL
-                const urlParts = imageUrl.split('/');
-                let fileName = urlParts[urlParts.length - 1].split('?')[0];
-                
-                // If there is no extension, try to infer the extension from the URL
-                if (!fileName.match(/\.(jpg|jpeg|png|gif|svg|webp)$/i)) {
-                  // Check if the URL has extension information
-                  const urlExtMatch = imageUrl.match(/\.(jpg|jpeg|png|gif|svg|webp)/i);
-                  if (urlExtMatch) {
-                    fileName = `image_${Date.now()}_${Math.random().toString(36).substr(2, 9)}${urlExtMatch[0]}`;
-                  } else {
-                    fileName = `image_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.png`;
-                  }
-                }
-                
-                // Determine the save path (assets/img/)
-                const saveDir = 'assets/img';
-                if (!fs.existsSync(saveDir)) {
-                  fs.mkdirSync(saveDir, { recursive: true });
-                }
-                
-                const savePath = path.join(saveDir, fileName);
-                
-                // Download the image
-                const protocol = imageUrl.startsWith('https') ? https : http;
-                await new Promise((resolve, reject) => {
-                  const request = protocol.get(imageUrl, (response) => {
-                    if (response.statusCode === 200 || response.statusCode === 301 || response.statusCode === 302) {
-                      // Handle the redirection
-                      if (response.statusCode === 301 || response.statusCode === 302) {
-                        const redirectUrl = response.headers.location;
-                        if (redirectUrl) {
-                          const redirectProtocol = redirectUrl.startsWith('https') ? https : http;
-                          redirectProtocol.get(redirectUrl, (redirectResponse) => {
-                            const fileStream = fs.createWriteStream(savePath);
-                            redirectResponse.pipe(fileStream);
-                            fileStream.on('finish', () => {
-                              fileStream.close();
-                              console.log(`✅ Downloaded: ${savePath}`);
-                              savedImages.push(`/${savePath}`);
-                              resolve();
-                            });
-                          }).on('error', reject);
-                          return;
-                        }
-                      }
-                      
-                      const fileStream = fs.createWriteStream(savePath);
-                      response.pipe(fileStream);
-                      fileStream.on('finish', () => {
-                        fileStream.close();
-                        console.log(`✅ Downloaded: ${savePath}`);
-                        savedImages.push(`/${savePath}`);
-                        resolve();
-                      });
-                    } else {
-                      reject(new Error(`Failed to download: ${response.statusCode}`));
-                    }
-                  });
-                  request.on('error', reject);
-                });
-              } catch (err) {
-                console.error(`❌ Failed to download ${imageUrl}:`, err.message);
-              }
-            }
-            
-            core.setOutput('saved_paths', JSON.stringify(savedImages));
-            core.setOutput('count', savedImages.length.toString());
+          repository: energy-modelling-tools/.github
+          ref: experiment/maed-plain-prefill
+          path: .emt-scripts
 
-      - name: Update YAML file
-        if: steps.parse.outputs.should_run == 'true'
+      - name: Apply editable YAML blocks
+        if: steps.parse.outputs.should_run == 'true' && steps.parse.outputs.editMode == 'blocks'
+        env:
+          PAYLOAD_B64: ${{ steps.parse.outputs.payloadB64 }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 - << 'PY'
+          import base64, os, pathlib, subprocess, sys
+          raw = os.environ["PAYLOAD_B64"]
+          payload = base64.b64decode(raw)
+          script = pathlib.Path(".emt-scripts/.github/scripts/apply_yml_issue.py")
+          subprocess.run([sys.executable, str(script)], input=payload, check=True)
+          PY
+
+      - name: Write raw YAML content
+        if: steps.parse.outputs.should_run == 'true' && steps.parse.outputs.editMode == 'raw'
         env:
           FILE_PATH: ${{ steps.parse.outputs.filePath }}
           YAML_CONTENT: ${{ steps.parse.outputs.yamlContent }}
@@ -227,17 +249,14 @@ jobs:
             const fs = require('fs');
             const path = require('path');
             const filePath = process.env.FILE_PATH;
-            const yamlContent = process.env.YAML_CONTENT;
-            
-            // Ensure the directory exists
             const dir = path.dirname(filePath);
-            if (!fs.existsSync(dir)) {
-              fs.mkdirSync(dir, { recursive: true });
-            }
-            
-            // Write YAML content directly (no front matter processing needed)
-            fs.writeFileSync(filePath, yamlContent, 'utf8');
-            console.log(`✅ YAML file updated: ${filePath}`);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(filePath, process.env.YAML_CONTENT, 'utf8');
+            console.log('YAML file updated from raw yaml block:', filePath);
+
+      - name: Remove helper checkout
+        if: steps.parse.outputs.should_run == 'true'
+        run: rm -rf .emt-scripts uploaded_files.txt
 
       - name: Create Pull Request
         if: steps.parse.outputs.should_run == 'true'
@@ -247,16 +266,16 @@ jobs:
           title: "Update ${{ steps.parse.outputs.filePath }}"
           body: |
             This PR was automatically created from issue #${{ github.event.issue.number }}.
-            
+
             **Changes:**
             - Updated `${{ steps.parse.outputs.filePath }}`
-            ${{ steps.images.outputs.count && steps.images.outputs.count != '0' && format('- Added {0} image(s) to assets/img/', steps.images.outputs.count) || '' }}
-            
+            - EMP photos are saved to `assets/img/EMP/`
+            - Partner logos are saved to `assets/img/partners/`
+
             Please review and merge if everything looks good.
-            
+
             ---
             Closes #${{ github.event.issue.number }}
           branch: "yml-edit-issue-${{ github.event.issue.number }}"
           delete-branch: true
           labels: yml-edit
-
