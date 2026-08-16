@@ -444,16 +444,16 @@ jobs:
                 }
               }
 
-              const newSectionHtml = (id, heading, text) => `
-    <h2 class="aboutpage-subtitle text-left mb-3 mt-lg-6">${escapeHtml(heading || id)}</h2>
-    <div class="col-md-12 animate-out mb-2">
-      <!-- CMS:section id=${id} -->
-      <p class="alt-lead text-gray text-justify-between col-md-15 mx-auto">
-        ${editableToHtml(text)}
-      </p>
-      <!-- /CMS:section -->
-    </div>
-`;
+              const newSectionHtml = (id, heading, text) => [
+                `<h2 class="aboutpage-subtitle text-left mb-3 mt-lg-6">${escapeHtml(heading || id)}</h2>`,
+                '<div class="col-md-12 animate-out mb-2">',
+                `<!-- CMS:section id=${id} -->`,
+                '<p class="alt-lead text-gray text-justify-between col-md-15 mx-auto">',
+                editableToHtml(text),
+                '</p>',
+                '<!-- /CMS:section -->',
+                '</div>'
+              ].join('\n');
 
               for (const [rawId, section] of Object.entries(updates)) {
                 if (existingIds.has(rawId)) continue;
