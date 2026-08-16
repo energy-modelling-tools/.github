@@ -11,6 +11,8 @@ body:
         - Edit the title on the `heading:` line
         - Edit the paragraph inside the `text` box
         - **Delete a section:** remove that whole `#### Section:` block (the heading line and its text box)
+
+        **Learning page / EMP events:** this form only edits the intro text (courses, UI, Flatpack). To add or change EMP event cards, photos, or outputs, use **Edit YAML file** and choose `_data/learning_events.yml (EMP event cards)`.
   - type: dropdown
     id: file
     attributes:
@@ -22,7 +24,7 @@ body:
         - "application.markdown (Applications page)"
         - "dataset.markdown (datasets and tools)"
         - "get_involved.markdown (Get Involved page)"
-        - "learning_capacity.markdown (Learning page)"
+        - "learning_capacity.markdown (Learning; EMP in YAML)"
     validations:
       required: true
   - type: textarea

@@ -192,6 +192,15 @@ jobs:
               if (cmsSections.length > 0) {
                 console.log(`✅ Found ${cmsSections.length} CMS sections; prefilling plain text only`);
                 header = `\n\n---\n\n### 🧾 Editable sections from \`${filePath}\`\n\n`;
+                if (/learning_capacity/i.test(filePath)) {
+                  header += [
+                    '> ⚠️ **EMP event cards are not in this file.**',
+                    '> Here you only edit the intro paragraphs (Open University course, MAED UI, EMP explanation, Flatpack).',
+                    '> To add or change EMP events, photos, country outputs, or adjacent trainings, close this and open **Edit YAML file** → `_data/learning_events.yml (EMP event cards)`.',
+                    '',
+                    ''
+                  ].join('\n');
+                }
                 const existingBlocks = cmsSections.map((section) => {
                   const lines = [`#### Section: ${section.id}`];
                   lines.push(`heading: ${section.heading || ''}`);
