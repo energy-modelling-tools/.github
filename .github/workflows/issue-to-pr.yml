@@ -417,6 +417,14 @@ jobs:
               };
 
               const rebuildSectionInner = (originalInner, editableText) => {
+                if (/<ul\b/i.test(originalInner)) {
+                  const ulOpen = (originalInner.match(/<ul\b[^>]*>/i) || ['<ul>'])[0];
+                  const items = String(editableText || '').split('\n')
+                    .map((line) => line.replace(/^\s*[-*]\s+/, '').trim())
+                    .filter(Boolean);
+                  const lis = items.map((item) => `          <li>${editableToHtml(item)}</li>`).join('\n');
+                  return `\n        ${ulOpen}\n${lis}\n        </ul>\n      `;
+                }
                 const html = editableToHtml(editableText);
                 const pMatch = originalInner.match(/<p\b[^>]*>/i);
                 if (pMatch) {
@@ -453,13 +461,13 @@ jobs:
                 const idx = fileContent.indexOf(marker);
                 if (idx < 0) return fileContent;
                 const before = fileContent.slice(0, idx);
-                const h2Re = /<h2\b[^>]*>[\s\S]*?<\/h2>/gi;
+                const h2Re = /<h[2-6]\b[^>]*>[\s\S]*?<\/h[2-6]>/gi;
                 let last = null;
                 let m;
                 while ((m = h2Re.exec(before))) last = m;
-                if (!last || !last[0].includes('aboutpage-subtitle')) return fileContent;
-                if (idx - (last.index + last[0].length) > 400) return fileContent;
-                const replaced = last[0].replace(/>([\s\S]*)<\/h2>/, `>${escapeHtml(newHeading)}</h2>`);
+                if (!last) return fileContent;
+                if (idx - (last.index + last[0].length) > 500) return fileContent;
+                const replaced = last[0].replace(/>([\s\S]*)<\/h([2-6])>/, `>${escapeHtml(newHeading)}</h$2>`);
                 return fileContent.slice(0, last.index) + replaced + fileContent.slice(last.index + last[0].length);
               };
 

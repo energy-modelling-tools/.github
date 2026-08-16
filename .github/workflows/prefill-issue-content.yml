@@ -122,7 +122,19 @@ jobs:
                 .replace(/&#39;/g, "'");
 
               const htmlToEditable = (html) => {
+                const inlineFormat = (chunk) => {
+                  let s = String(chunk || '');
+                  s = s.replace(/<strong>([\s\S]*?)<\/strong>/gi, '**$1**');
+                  s = s.replace(/<b>([\s\S]*?)<\/b>/gi, '**$1**');
+                  s = s.replace(/<em>([\s\S]*?)<\/em>/gi, '*$1*');
+                  s = s.replace(/<i>([\s\S]*?)<\/i>/gi, '*$1*');
+                  s = s.replace(/<a\b[^>]*href=["']\s*([^"']+?)\s*["'][^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)');
+                  s = s.replace(/<a\b[^>]*>([\s\S]*?)<\/a>/gi, '$1');
+                  s = s.replace(/<[^>]+>/g, '');
+                  return decodeEntities(s).replace(/\s+/g, ' ').trim();
+                };
                 let s = String(html || '').trim();
+                s = s.replace(/<li\b[^>]*>([\s\S]*?)<\/li>/gi, (_, inner) => `\n- ${inlineFormat(inner)}`);
                 s = s.replace(/<\/p>\s*<p\b[^>]*>/gi, '\n\n');
                 s = s.replace(/<p\b[^>]*>/gi, '').replace(/<\/p>/gi, '');
                 s = s.replace(/<br\s*\/?>/gi, '\n');
@@ -147,14 +159,12 @@ jobs:
               let cmsMatch;
               while ((cmsMatch = cmsRe.exec(content)) !== null) {
                 const before = content.slice(0, cmsMatch.index);
-                const headings = [...before.matchAll(/<h2\b[^>]*>([\s\S]*?)<\/h2>/gi)];
+                const headings = [...before.matchAll(/<h([2-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi)];
                 let heading = '';
                 if (headings.length) {
                   const last = headings[headings.length - 1];
                   const dist = cmsMatch.index - (last.index + last[0].length);
-                  if (dist < 400 && last[0].includes('aboutpage-subtitle')) {
-                    heading = htmlToEditable(last[1]);
-                  }
+                  if (dist < 500) heading = htmlToEditable(last[2]);
                 }
                 cmsSections.push({
                   id: cmsMatch[1].trim(),
