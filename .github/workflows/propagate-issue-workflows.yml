@@ -5,6 +5,10 @@ on:
     branches: [main]
     paths:
       - 'workflow-templates/issue-content-handler.yml'
+      - '.github/workflows/propagate-issue-workflows.yml'
+  schedule:
+    # Re-sync the caller workflow weekly so new org repos pick it up
+    - cron: '0 3 * * 1'
   workflow_dispatch:
 
 permissions:
@@ -28,31 +32,21 @@ jobs:
       - name: Propagate calling workflow to org repos
         env:
           TOKEN: ${{ steps.app-token.outputs.token }}
+          ORG: energy-modelling-tools
         run: |
           python3 - << 'PYEOF'
-          import base64, json, os, sys, urllib.request, urllib.error
+          import base64, json, os, sys, urllib.parse, urllib.request, urllib.error
 
           TOKEN = os.environ["TOKEN"]
+          ORG = os.environ["ORG"]
           WORKFLOW_FILE = "workflow-templates/issue-content-handler.yml"
           TARGET_PATH = ".github/workflows/issue-content-handler.yml"
+          LEGACY_PATH = ".github/workflows/workflowcalls.yml"
           COMMIT_MSG = "Add/update issue content handler workflow from org template"
+          SKIP_REPOS = {".github", "page-template"}
 
           with open(WORKFLOW_FILE, "rb") as f:
               content = base64.b64encode(f.read()).decode("ascii")
-
-          repos = [
-              "energy-modelling-tools/ffrm",
-              "energy-modelling-tools/nismod",
-              "energy-modelling-tools/osemosys",
-              "energy-modelling-tools/fintrack",
-              "energy-modelling-tools/finplan",
-              "energy-modelling-tools/minfin",
-              "energy-modelling-tools/onsset",
-              "energy-modelling-tools/pathcalc",
-              "energy-modelling-tools/onstove",
-              "energy-modelling-tools/clews",
-              "energy-modelling-tools/energy-modelling-tools.github.io",
-          ]
 
           headers = {
               "Authorization": f"Bearer {TOKEN}",
@@ -60,47 +54,110 @@ jobs:
               "X-GitHub-Api-Version": "2022-11-28",
           }
 
-          failures = {}
-          for repo in repos:
-              url = f"https://api.github.com/repos/{repo}/contents/{TARGET_PATH}"
-
-              # Check if file already exists and get its SHA
-              sha = None
+          def api(method, url, payload=None):
+              data = None
+              req_headers = dict(headers)
+              if payload is not None:
+                  data = json.dumps(payload).encode("utf-8")
+                  req_headers["Content-Type"] = "application/json"
+              req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
               try:
-                  req = urllib.request.Request(url, headers=headers)
                   with urllib.request.urlopen(req) as resp:
-                      existing = json.loads(resp.read())
+                      body = resp.read()
+                      return resp.status, json.loads(body) if body else {}
+              except urllib.error.HTTPError as e:
+                  body = e.read().decode("utf-8", errors="replace")
+                  try:
+                      parsed = json.loads(body)
+                  except json.JSONDecodeError:
+                      parsed = {"message": body}
+                  return e.code, parsed
+
+          def list_org_repos():
+              repos = []
+              page = 1
+              while True:
+                  url = (
+                      f"https://api.github.com/orgs/{ORG}/repos"
+                      f"?per_page=100&page={page}&type=all&sort=full_name"
+                  )
+                  status, data = api("GET", url)
+                  if status != 200:
+                      raise RuntimeError(f"Failed to list org repos (HTTP {status}): {data}")
+                  if not data:
+                      break
+                  repos.extend(data)
+                  if len(data) < 100:
+                      break
+                  page += 1
+              return repos
+
+          def contents_url(repo, path):
+              encoded = urllib.parse.quote(path)
+              return f"https://api.github.com/repos/{repo}/contents/{encoded}"
+
+          org_repos = list_org_repos()
+          targets = []
+          for repo in org_repos:
+              name = repo.get("name")
+              if name in SKIP_REPOS:
+                  print(f"⏭️  Skipping {ORG}/{name}")
+                  continue
+              if repo.get("archived"):
+                  print(f"⏭️  Skipping archived {ORG}/{name}")
+                  continue
+              targets.append(f"{ORG}/{name}")
+
+          print(f"Syncing {TARGET_PATH} to {len(targets)} repos")
+
+          failures = {}
+          for repo in targets:
+              url = contents_url(repo, TARGET_PATH)
+              sha = None
+              status, existing = api("GET", url)
+              if status == 200:
                   sha = existing.get("sha")
-                  # GitHub's API returns base64 content with newlines every 60 chars;
-                  # strip those to compare against our single-line base64 string.
                   existing_content = existing.get("content", "").replace("\n", "")
                   if existing_content == content:
                       print(f"⏭️  No change needed for {repo}")
-                      continue
-              except urllib.error.HTTPError as e:
-                  if e.code == 404:
-                      sha = None
                   else:
-                      msg = e.read().decode("utf-8", errors="replace")
-                      print(f"❌ Failed to check {repo}: HTTP {e.code}: {msg}")
-                      failures[repo] = f"GET HTTP {e.code}: {msg}"
-                      continue
+                      payload = {"message": COMMIT_MSG, "content": content, "sha": sha}
+                      put_status, put_body = api("PUT", url, payload)
+                      if put_status in (200, 201):
+                          print(f"✅ Updated {repo}")
+                      else:
+                          print(f"❌ Failed to update {repo} (HTTP {put_status}): {put_body}")
+                          failures[repo] = f"PUT HTTP {put_status}: {put_body}"
+              elif status == 404:
+                  payload = {"message": COMMIT_MSG, "content": content}
+                  put_status, put_body = api("PUT", url, payload)
+                  if put_status in (200, 201):
+                      print(f"✅ Created {repo}")
+                  else:
+                      print(f"❌ Failed to create {repo} (HTTP {put_status}): {put_body}")
+                      failures[repo] = f"PUT HTTP {put_status}: {put_body}"
+              else:
+                  print(f"❌ Failed to check {repo}: HTTP {status}: {existing}")
+                  failures[repo] = f"GET HTTP {status}: {existing}"
+                  continue
 
-              payload = {"message": COMMIT_MSG, "content": content}
-              if sha:
-                  payload["sha"] = sha
-
-              data = json.dumps(payload).encode("utf-8")
-              put_headers = {**headers, "Content-Type": "application/json"}
-              req = urllib.request.Request(url, data=data, headers=put_headers, method="PUT")
-              try:
-                  with urllib.request.urlopen(req) as resp:
-                      action = "Updated" if sha else "Created"
-                      print(f"✅ {action} {repo}")
-              except urllib.error.HTTPError as e:
-                  body = e.read().decode("utf-8", errors="replace")
-                  print(f"❌ Failed for {repo} (HTTP {e.code}): {body}")
-                  failures[repo] = f"PUT HTTP {e.code}: {body}"
+              # Remove the old per-repo caller so issues are not handled twice
+              legacy_url = contents_url(repo, LEGACY_PATH)
+              legacy_status, legacy = api("GET", legacy_url)
+              if legacy_status == 200:
+                  del_status, del_body = api(
+                      "DELETE",
+                      legacy_url,
+                      {
+                          "message": "Remove legacy workflowcalls.yml; replaced by issue-content-handler.yml",
+                          "sha": legacy.get("sha"),
+                      },
+                  )
+                  if del_status in (200, 201):
+                      print(f"🧹 Removed {LEGACY_PATH} from {repo}")
+                  else:
+                      print(f"❌ Failed to remove {LEGACY_PATH} from {repo} (HTTP {del_status}): {del_body}")
+                      failures[repo] = f"DELETE HTTP {del_status}: {del_body}"
 
           if failures:
               print("\nFailed repos and reasons:")
