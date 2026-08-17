@@ -81,7 +81,7 @@ url: https://example.com
 """
         )
 
-    elif name == "publications.yml":
+    elif name in ("publications.yml", "publication.yml"):
         pubs = data if isinstance(data, list) else []
         for pub in pubs:
             title = pub.get("title") or "untitled"
@@ -157,6 +157,32 @@ url: https://example.com
 ```
 """
         )
+    elif name == "tools.yml":
+        tools = data if isinstance(data, list) else []
+        for tool in tools:
+            label = tool.get("name") or "tool"
+            lines = [
+                f"name: {tool.get('name', '')}",
+                f"url: {tool.get('url', '')}",
+                "logo:",
+                md_image(label, tool.get("logo")) or "(drag a logo onto the next line)",
+            ]
+            chunks.append(f"#### Tool: {label}\n" + fence("\n".join(lines)))
+        chunks.append(
+            """### Add a tool (optional)
+
+Drag the logo **inside** the text fence.
+
+#### Tool: new_tool
+```text
+name: Tool name
+url: /tool-name/
+logo:
+![tool-name](paste-or-drag-logo-here)
+```
+"""
+        )
+
     else:
         chunks.append("```yaml\n" + raw + "\n```\n")
 

@@ -223,7 +223,7 @@ def main() -> None:
             )
         dump_yaml({"events": events, "adjacent_events": adjacent}, file_path)
 
-    elif name == "publications.yml":
+    elif name in ("publications.yml", "publication.yml"):
         pubs = []
         for pub in payload.get("publications") or []:
             pubs.append(
@@ -273,6 +273,29 @@ def main() -> None:
                 }
             )
         dump_yaml(links, file_path)
+
+    elif name == "tools.yml":
+        previous = existing_media(file_path, "tools", "logo")
+        tools = []
+        for tool in payload.get("tools") or []:
+            label = str_field(tool, "name") or "tool"
+            logo = resolve_media(
+                str_field(tool, "logo"),
+                label,
+                pathlib.Path("assets/img/tools"),
+                "root",
+                saved,
+                failures,
+                previous.get(label, ""),
+            )
+            tools.append(
+                {
+                    "name": str_field(tool, "name"),
+                    "url": str_field(tool, "url"),
+                    "logo": logo,
+                }
+            )
+        dump_yaml(tools, file_path)
 
     else:
         raise SystemExit(f"Unsupported YAML file: {name}")

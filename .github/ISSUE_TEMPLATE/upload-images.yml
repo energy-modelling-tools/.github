@@ -3,6 +3,11 @@ description: "Upload images/files into the repository via GitHub Issues"
 title: "Upload Images: "
 labels: ["upload-image"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        For EMP event photos and partner logos, prefer **Edit YAML file**.
+        Drag the image into that event or partner box; a separate Upload Images issue is only needed for other folders.
   - type: input
     id: path
     attributes:

@@ -146,6 +146,9 @@ jobs:
               if (kind === 'Link' && heading === 'new_link') {
                 return url === 'https://example.com' || title === 'Bluesky' || fields.name === 'Bluesky';
               }
+              if (kind === 'Tool' && heading === 'new_tool') {
+                return fields.name === 'Tool name' || logo.includes('paste-or-drag');
+              }
               return false;
             };
 
@@ -164,8 +167,11 @@ jobs:
             const links = collect('Link')
               .filter((item) => !isUnchangedTemplate('Link', item.heading, item.fields))
               .map((item) => item.fields);
+            const tools = collect('Tool')
+              .filter((item) => !isUnchangedTemplate('Tool', item.heading, item.fields))
+              .map((item) => item.fields);
 
-            const hasBlocks = events.length + adjacent.length + publications.length + partners.length + links.length > 0;
+            const hasBlocks = events.length + adjacent.length + publications.length + partners.length + links.length + tools.length > 0;
 
             let yamlContent = '';
             if (!hasBlocks) {
@@ -200,12 +206,13 @@ jobs:
               adjacent,
               publications,
               partners,
-              links
+              links,
+              tools
             };
             console.log('YAML file path:', filePath);
             console.log('Edit mode:', hasBlocks ? 'blocks' : 'raw-yaml');
             if (hasBlocks) {
-              console.log('Events:', events.length, 'Adjacent:', adjacent.length, 'Publications:', publications.length, 'Partners:', partners.length, 'Links:', links.length);
+              console.log('Events:', events.length, 'Adjacent:', adjacent.length, 'Publications:', publications.length, 'Partners:', partners.length, 'Links:', links.length, 'Tools:', tools.length);
             }
 
             core.setOutput('filePath', filePath);
