@@ -84,21 +84,91 @@ class DropAuthOnRedirect(urllib.request.HTTPRedirectHandler):
         return new
 
 
-def download(url: str, dest_base: pathlib.Path) -> pathlib.Path:
+def is_attachment(url: str) -> bool:
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    return "user-attachments" in url or "githubusercontent.com" in host
+
+
+def signed_attachment_url(url: str) -> str:
+    """GITHUB_TOKEN cannot GET user-attachments (404). The Markdown API can."""
     token = os.environ.get("GITHUB_TOKEN", "")
-    parsed = urllib.parse.urlparse(url)
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    if not token or not is_attachment(url):
+        return url
+    payload = json.dumps(
+        {"text": f"![img]({url})", "mode": "gfm", "context": repo or "github/docs"}
+    ).encode()
+    req = urllib.request.Request(
+        "https://api.github.com/markdown",
+        data=payload,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json",
+            "User-Agent": "energy-modelling-tools-yml-sync",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            html = resp.read().decode("utf-8", "replace")
+    except Exception as err:
+        print(f"Markdown API could not rewrite {url}: {err}")
+        return url
+    match = re.search(r'<img[^>]+src="([^"]+)"', html)
+    if not match:
+        print(f"Markdown API returned no img src for {url}")
+        return url
+    rewritten = match.group(1).replace("&amp;", "&")
+    print(f"Rewrote attachment via Markdown API -> {rewritten.split('?')[0]}")
+    return rewritten
+
+
+def fetch_url(url: str, send_auth: bool):
+    token = os.environ.get("GITHUB_TOKEN", "")
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
     headers = {
-        "User-Agent": "energy-modelling-tools-yml-sync",
+        "User-Agent": "Mozilla/5.0 energy-modelling-tools-yml-sync",
         "Accept": "*/*",
     }
-    if token and parsed.hostname and "github.com" in parsed.hostname:
+    # Never send the Actions token to GitHub's attachment or signed-CDN hosts.
+    # Those endpoints return 404 when they see Authorization.
+    if (
+        send_auth
+        and token
+        and "github.com" in host
+        and "user-attachments" not in url
+        and "githubusercontent.com" not in host
+    ):
         headers["Authorization"] = f"Bearer {token}"
     opener = urllib.request.build_opener(DropAuthOnRedirect)
     req = urllib.request.Request(url, headers=headers)
     with opener.open(req, timeout=60) as resp:
-        content_type = resp.info().get_content_type()
-        data = resp.read()
-        final_url = resp.geturl()
+        return resp.read(), resp.info().get_content_type(), resp.geturl()
+
+
+def download(url: str, dest_base: pathlib.Path) -> pathlib.Path:
+    candidates = []
+    rewritten = signed_attachment_url(url)
+    if rewritten != url:
+        candidates.append(rewritten)
+    candidates.append(url)
+    last_err = None
+    data = content_type = final_url = None
+    for candidate in candidates:
+        for send_auth in (False, True):
+            try:
+                data, content_type, final_url = fetch_url(candidate, send_auth)
+                last_err = None
+                break
+            except Exception as err:
+                last_err = err
+                print(f"Download failed auth={send_auth} {candidate}: {err}")
+        if last_err is None:
+            break
+    if last_err is not None:
+        raise last_err
     ext = EXT_MAP.get(content_type, "")
     if not ext:
         path_name = pathlib.Path(urllib.parse.urlparse(final_url).path).name

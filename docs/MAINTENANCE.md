@@ -84,6 +84,9 @@ after any change to the prefill or rebuild logic.
 - **Auth on redirect** — GitHub attachment URLs redirect to a signed host that rejects
   a forwarded `Authorization` header with a 404. `apply_yml_issue.py` uses
   `DropAuthOnRedirect` to strip it across hosts. Don't reintroduce a plain `urlopen`.
+- **`GITHUB_TOKEN` cannot GET `user-attachments`** — that endpoint 404s for Actions
+  tokens. Rewrite the URL through `POST /markdown` first, then download the signed
+  `private-user-images.githubusercontent.com` link with no `Authorization`.
 - **Source wrapping is not a line break** — HTML wrapped across source lines must be
   collapsed on prefill, otherwise the rebuild writes literal `<br>` into every
   paragraph and one edit reformats the whole page. Only real `<br>` and `</p><p>`

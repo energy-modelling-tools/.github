@@ -80,6 +80,17 @@ jobs:
                       title: row[3].trim(),
                       url: row[4].trim()
                     });
+                    continue;
+                  }
+                  const loose = trimmed.replace(/^[-*]\s*/, '');
+                  if (loose) {
+                    const parts = loose.split('|').map((part) => part.trim()).filter(Boolean);
+                    outputs.push({
+                      country: parts.length >= 3 ? parts[0] : '',
+                      flag: parts.length >= 4 ? parts[1] : '',
+                      title: parts.length >= 3 ? parts[parts.length - 2] : parts[0],
+                      url: parts.length >= 2 ? parts[parts.length - 1] : ''
+                    });
                   }
                   continue;
                 }
@@ -276,11 +287,12 @@ jobs:
             const lines = fs.readFileSync(reportPath, 'utf8').split('\n').filter(Boolean);
             if (lines.length === 0) return;
             const body = [
-              '⚠️ Your text was saved, but these images could not be downloaded, so the previous picture was kept:',
+              'Your text was saved. These photos could not be copied into the repository, so the page has no new picture (a new card stays blank; an existing card keeps its old picture):',
               '',
               ...lines.map((line) => '- ' + line),
               '',
-              'Please re-drag the image inside that block and save again. Make sure the URL has no quotes around it.'
+              'Delete the old `![...](url)` line, drag the file into that block again, and save. The URL must have no quotes.',
+              'If this happens twice, GitHub is blocking the download — tell the maintainer; do not keep re-dragging.'
             ].join('\n');
             await github.rest.issues.createComment({
               ...context.repo,
