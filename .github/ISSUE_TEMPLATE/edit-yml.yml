@@ -1,34 +1,30 @@
 name: "Edit YAML file"
-description: "Edit a YAML data file and optionally upload images"
+description: "Edit EMP cards, papers, partner logos, or social links. Drag photos into the issue after it opens."
 title: "YAML Edit: "
 labels: ["yml-edit"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        After you submit, this issue is filled with **one box per item**.
+
+        - EMP photos: drag into that event's text box → saved to `assets/img/EMP/`
+        - Partner logos: drag into that partner's text box → saved to `assets/img/partners/`
+        - **Delete an item:** remove that whole `#### Event:` / `#### Publication:` / `#### Partner:` / `#### Link:` block
+        - **Reorder:** cut and paste whole blocks
+        - You do **not** need a separate Upload Images issue for EMP photos or logos
   - type: dropdown
     id: yml_file
     attributes:
       label: "Which YAML file do you want to edit?"
-      description: "Select a YAML file to edit"
+      description: "Filename stays the same. The note in brackets is what that file usually changes."
       options:
-        - "_data/learning_events.yml"
-        - "_data/orgs.yml"
-        - "_data/publications.yml"
-        - "_data/social_media.yml"
+        - "_data/learning_events.yml (EMP event cards)"
+        - "_data/publications.yml (paper list)"
+        - "_data/orgs.yml (partner logos)"
+        - "_data/social_media.yml (social icons)"
     validations:
       required: true
-  - type: textarea
-    id: yaml_content
-    attributes:
-      label: "YAML Content"
-      description: "This field will be automatically filled with the current file content. You can then edit it. You can drag and drop images into this textarea to upload them."
-      placeholder: |
-        (This field will be automatically filled after you create the issue)
-        events:
-          - title: "Example Event"
-            image: "../assets/img/example.jpg"
-            description: "Event description"
-      render: yaml
-    validations:
-      required: false
   - type: textarea
     id: comment
     attributes:

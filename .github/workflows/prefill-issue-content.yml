@@ -66,7 +66,7 @@ jobs:
             for (const pattern of patterns) {
               const match = body.match(pattern);
               if (match && match[1]) {
-                filePath = match[1].trim();
+                filePath = match[1].trim().replace(/\s*\([^)]*\)\s*$/, '').trim();
                 break;
               }
             }
@@ -112,34 +112,164 @@ jobs:
               
               let content = fs.readFileSync(filePath, 'utf8');
               console.log(`Markdown file read successfully, length: ${content.length} characters`);
-              
-              // Markdown files: remove front matter (YAML front matter)
-              if (content.trim().startsWith('---')) {
-                const parts = content.split(/^---$/m);
-                if (parts.length >= 3) {
-                  // Skip the first empty string and front matter, keep the body
-                  content = parts.slice(2).join('---').trim();
-                  console.log('Removed front matter, remaining length:', content.length);
+
+              const decodeEntities = (s) => s
+                .replace(/&nbsp;/g, ' ')
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&quot;/g, '"')
+                .replace(/&#39;/g, "'");
+
+              const htmlToEditable = (html) => {
+                const inlineFormat = (chunk) => {
+                  let s = String(chunk || '');
+                  s = s.replace(/<strong>([\s\S]*?)<\/strong>/gi, '**$1**');
+                  s = s.replace(/<b>([\s\S]*?)<\/b>/gi, '**$1**');
+                  s = s.replace(/<em>([\s\S]*?)<\/em>/gi, '*$1*');
+                  s = s.replace(/<i>([\s\S]*?)<\/i>/gi, '*$1*');
+                  s = s.replace(/<a\b[^>]*href=["']\s*([^"']+?)\s*["'][^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)');
+                  s = s.replace(/<a\b[^>]*>([\s\S]*?)<\/a>/gi, '$1');
+                  s = s.replace(/<[^>]+>/g, '');
+                  return decodeEntities(s).replace(/\s+/g, ' ').trim();
+                };
+                let s = String(html || '').trim();
+                s = s.replace(/<li\b[^>]*>([\s\S]*?)<\/li>/gi, (_, inner) => `\n- ${inlineFormat(inner)}`);
+                s = s.replace(/<\/p>\s*<p\b[^>]*>/gi, '\n\n');
+                s = s.replace(/<p\b[^>]*>/gi, '').replace(/<\/p>/gi, '');
+                s = s.replace(/<br\s*\/?>/gi, '\n');
+                s = s.replace(/<strong>([\s\S]*?)<\/strong>/gi, '**$1**');
+                s = s.replace(/<b>([\s\S]*?)<\/b>/gi, '**$1**');
+                s = s.replace(/<em>([\s\S]*?)<\/em>/gi, '*$1*');
+                s = s.replace(/<i>([\s\S]*?)<\/i>/gi, '*$1*');
+                s = s.replace(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)');
+                s = s.replace(/<a\b[^>]*>([\s\S]*?)<\/a>/gi, '$1');
+                s = s.replace(/<img\b[^>]*>/gi, (tag) => {
+                  const src = (tag.match(/src=["']([^"']+)["']/) || [])[1] || '';
+                  const alt = (tag.match(/alt=["']([^"']+)["']/) || [])[1] || 'image';
+                  return src ? `\n![${alt}](${src})\n` : '';
+                });
+                s = s.replace(/<[^>]+>/g, '');
+                s = decodeEntities(s);
+                return s.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/[ \t]{2,}/g, ' ').trim();
+              };
+
+              const cmsSections = [];
+              const cmsRe = /<!--\s*CMS:section\s+id=([^\s]+)\s*-->([\s\S]*?)<!--\s*\/CMS:section\s*-->/g;
+              let cmsMatch;
+              while ((cmsMatch = cmsRe.exec(content)) !== null) {
+                const before = content.slice(0, cmsMatch.index);
+                const headings = [...before.matchAll(/<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi)];
+                let heading = '';
+                let link = '';
+                if (headings.length) {
+                  const last = headings[headings.length - 1];
+                  const dist = cmsMatch.index - (last.index + last[0].length);
+                  if (dist < 500) {
+                    const innerA = String(last[2] || '').match(/<a\b[^>]*href=["']\s*([^"']+?)\s*["'][^>]*>/i);
+                    if (innerA) link = innerA[1].trim();
+                    heading = htmlToEditable(last[2])
+                      .replace(/\[([^\]]*)\]\((https?:[^)]+)\)/g, '$1')
+                      .replace(/\*\*/g, '')
+                      .replace(/\s+/g, ' ')
+                      .trim();
+                    const beforeH = before.slice(0, last.index);
+                    const aTags = [...beforeH.matchAll(/<a\b[^>]*href=["']\s*([^"']+?)\s*["'][^>]*>/gi)];
+                    if (aTags.length) {
+                      const a = aTags[aTags.length - 1];
+                      const afterA = beforeH.slice(a.index + a[0].length);
+                      if (!afterA.includes('</a>') && !link) link = a[1].trim();
+                    }
+                  }
                 }
+                cmsSections.push({
+                  id: cmsMatch[1].trim(),
+                  heading,
+                  link,
+                  text: htmlToEditable(cmsMatch[2])
+                });
               }
-              console.log('✅ Processing as Markdown file');
-              
-              // Preserve the original issue body and add prefilled content
+
               const originalBody = context.payload.issue.body || '';
-              const header = `\n\n---\n\n### 🧾 Prefilled Content from \`${filePath}\`\n\n`;
-              const prefilledContent = '```markdown\n' + content + '\n```\n\n';
-              
-              const instructions = [
-                '> 📝 **How to edit:**',
-                '> 1. Click the **three dots (···)** in the top right corner',
-                '> 2. Select **"Edit"**',
-                '> 3. Edit the content in the code block above (between \\`\\`\\`markdown and \\`\\`\\`)',
-                '> 4. Click **"Update comment"** to save',
-                '> 5. The system will automatically create a Pull Request',
-                '',
-                '> ⚠️ **Important:** Only edit the content inside the code block, do not delete the \\`\\`\\`markdown markers!'
-              ].join('\n');
-              
+              let header;
+              let prefilledContent;
+              let instructions;
+
+              if (cmsSections.length > 0) {
+                console.log(`✅ Found ${cmsSections.length} CMS sections; prefilling plain text only`);
+                header = `\n\n---\n\n### 🧾 Editable sections from \`${filePath}\`\n\n`;
+                if (/learning_capacity/i.test(filePath)) {
+                  header += [
+                    '> ⚠️ **EMP event cards are not in this file.**',
+                    '> Here you only edit the intro paragraphs (Open University course, MAED UI, EMP explanation, Flatpack).',
+                    '> To add or change EMP events, photos, country outputs, or adjacent trainings, close this and open **Edit YAML file** → `_data/learning_events.yml (EMP event cards)`.',
+                    '',
+                    ''
+                  ].join('\n');
+                }
+                const existingBlocks = cmsSections.map((section) => {
+                  const lines = [`#### Section: ${section.id}`];
+                  lines.push(`heading: ${section.heading || ''}`);
+                  if (section.link) lines.push(`link: ${section.link}`);
+                  lines.push('```text', section.text, '```', '');
+                  return lines.join('\n');
+                }).join('\n');
+                const newSectionTemplate = [
+                  '### Add a new section (optional)',
+                  '',
+                  'Copy the block below to add another heading + paragraph. Change `new_section_id`. Duplicate the block to add more than one. Leave it unchanged to skip.',
+                  '',
+                  'To **delete** a section, remove that whole `#### Section:` block (the `heading:` line and its text box).',
+                  '',
+                  '#### Section: new_section_id',
+                  'heading: New heading',
+                  '```text',
+                  'Write the new paragraph here.',
+                  '',
+                  'To add a picture: drag the file into this box (inside the text fence).',
+                  'GitHub will insert something like ![image](https://github.com/user-attachments/assets/xxxx).',
+                  'Change `image` to a short filename. Do not put quotes around the URL.',
+                  '```',
+                  ''
+                ].join('\n');
+                prefilledContent = existingBlocks + '\n' + newSectionTemplate + '\n';
+                instructions = [
+                  '> 📝 **How to edit:**',
+                  '> 1. Click the **three dots (···)** in the top right corner and choose **Edit**',
+                  '> 2. `heading:` is the title on the page — edit it there',
+                  '> 3. Change the words inside each ` ```text ` block',
+                  '> 4. Keep existing `#### Section:` ids as they are',
+                  '> 5. **Delete a section:** remove that whole `#### Section:` block',
+                  '> 6. Links: `[visible text](https://example.com)` · Bold: `**like this**`',
+                  '> 7. Images: put the cursor **inside** a ` ```text ` block, drag the file in, then change `![image](url)` to `![short-name](url)` — no quotes around the URL',
+                  '> 8. New section: fill in the optional block at the bottom',
+                  '> 9. Click **Update comment** — a Pull Request will be created automatically',
+                  '',
+                  '> Layout HTML is kept in the file. You are editing titles, wording, links, and images.'
+                ].join('\n');
+              } else {
+                if (content.trim().startsWith('---')) {
+                  const parts = content.split(/^---$/m);
+                  if (parts.length >= 3) {
+                    content = parts.slice(2).join('---').trim();
+                    console.log('Removed front matter, remaining length:', content.length);
+                  }
+                }
+                console.log('✅ No CMS sections; prefilling full file');
+                header = `\n\n---\n\n### 🧾 Prefilled Content from \`${filePath}\`\n\n`;
+                prefilledContent = '```markdown\n' + content + '\n```\n\n';
+                instructions = [
+                  '> 📝 **How to edit:**',
+                  '> 1. Click the **three dots (···)** in the top right corner',
+                  '> 2. Select **"Edit"**',
+                  '> 3. Edit the content in the code block above (between \\`\\`\\`markdown and \\`\\`\\`)',
+                  '> 4. Click **"Update comment"** to save',
+                  '> 5. The system will automatically create a Pull Request',
+                  '',
+                  '> ⚠️ **Important:** Only edit the content inside the code block, do not delete the \\`\\`\\`markdown markers!'
+                ].join('\n');
+              }
+
               const newBody = originalBody + header + prefilledContent + instructions;
               
               await github.rest.issues.update({

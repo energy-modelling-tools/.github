@@ -21,59 +21,46 @@ jobs:
             const labels = context.payload.issue.labels || [];
             const labelNames = labels.map(l => l.name);
             console.log('Issue labels:', labelNames);
-            
-            // Check if this is a yml-edit issue
+
             const hasYmlEdit = labelNames.includes('yml-edit');
             const hasUpload = labelNames.includes('upload-image');
             const body = context.payload.issue.body || '';
-            console.log('Full issue body:', body);
-            
-            // Skip upload issues - they are handled by issue-upload-image.yml
+
             if (hasUpload) {
               console.log('Skipping: this is an upload issue, handled by issue-upload-image.yml');
               core.setOutput('should_run', 'false');
               return;
             }
-            
+
             const hasYamlFileField = body.includes('Which YAML file do you want to edit');
-            
             if (!hasYmlEdit && !hasYamlFileField) {
               console.log('Skipping: no yml-edit label and no YAML file field in body');
               core.setOutput('should_run', 'false');
               return;
             }
-            
-            // Extract YAML file path from issue body
-            // GitHub forms format might be: ### Which YAML file do you want to edit?\n\nvalue\n
+
             let filePath = null;
-            
-            // Try multiple matching patterns
             const patterns = [
               /###\s*Which YAML file do you want to edit\?\s*\n\s*([^\n]+)/i,
               /###\s*Which YAML file do you want to edit\?\s*\n\n\s*([^\n]+)/i,
               /Which YAML file do you want to edit[?？]\s*\n\s*([^\n]+)/i,
               /Which YAML file do you want to edit[?？]\s*\n\n\s*([^\n]+)/i
             ];
-            
             for (const pattern of patterns) {
               const match = body.match(pattern);
               if (match && match[1]) {
-                filePath = match[1].trim();
-                // Ensure it's a YAML file
-                if (filePath.endsWith('.yml') || filePath.endsWith('.yaml')) {
-                  break;
-                }
+                filePath = match[1].trim().replace(/\s*\([^)]*\)\s*$/, '').trim();
+                if (filePath.endsWith('.yml') || filePath.endsWith('.yaml')) break;
               }
             }
-            
+
             if (!filePath) {
               console.error('No YAML file path found in issue body');
-              console.log('Body content:', JSON.stringify(body));
               core.setOutput('should_run', 'false');
               return;
             }
-            
-            console.log('✅ Parsed YAML file path:', filePath);
+
+            console.log('Parsed YAML file path:', filePath);
             core.setOutput('should_run', 'true');
             core.setOutput('filePath', filePath);
 
@@ -81,93 +68,63 @@ jobs:
         if: steps.check_and_parse.outputs.should_run == 'true'
         uses: actions/checkout@v4
 
-      - name: Read YAML file content and update issue
+      - name: Checkout YAML helper scripts
         if: steps.check_and_parse.outputs.should_run == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: energy-modelling-tools/.github
+          ref: main
+          path: .emt-scripts
+
+      - name: Build editable YAML blocks
+        if: steps.check_and_parse.outputs.should_run == 'true'
+        id: build
+        env:
+          FILE_PATH: ${{ steps.check_and_parse.outputs.filePath }}
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 .emt-scripts/.github/scripts/yaml_to_issue.py "$FILE_PATH" > "$RUNNER_TEMP/yml_prefill.md"
+
+      - name: Update issue with editable items
+        if: steps.check_and_parse.outputs.should_run == 'true'
+        env:
+          FILE_PATH: ${{ steps.check_and_parse.outputs.filePath }}
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             const issue_number = context.issue.number;
-            const filePath = '${{ steps.check_and_parse.outputs.filePath }}';
-            
-            console.log(`Attempting to read YAML file: ${filePath}`);
-            
+            const filePath = process.env.FILE_PATH;
+            const prefillPath = `${process.env.RUNNER_TEMP}/yml_prefill.md`;
+
             try {
-              // Check if the file exists
-              if (!fs.existsSync(filePath)) {
-                throw new Error(`File not found: ${filePath}`);
+              if (!fs.existsSync(prefillPath)) {
+                throw new Error('Prefill markdown was not generated');
               }
-              
-              let content = fs.readFileSync(filePath, 'utf8');
-              console.log(`YAML file read successfully, length: ${content.length} characters`);
-              
-              // YAML files don't need front matter removal, use all content directly
-              
-              // Update the YAML Content field in the issue body
-              // GitHub Forms format: ### YAML Content\n\n```yaml\n...\n```\n or placeholder text
+              const itemsMarkdown = fs.readFileSync(prefillPath, 'utf8');
               let originalBody = context.payload.issue.body || '';
-              
-              const yamlContentField = '```yaml\n' + content + '\n```';
-              
-              // Try to find and replace the YAML Content field
-              // Pattern 1: ### YAML Content\n\n```yaml\n...\n```\n (with code block)
-              const yamlContentPattern1 = /(###\s*YAML Content\s*\n\n?)(```yaml\s*\n[\s\S]*?\n```\s*\n?)/i;
-              // Pattern 2: ### YAML Content\n\n... (without code block, may have placeholder)
-              const yamlContentPattern2 = /(###\s*YAML Content\s*\n\n?)([^\n]*(?:\n(?!###|---|```)[^\n]*)*?)(?=\n###|\n---|$)/i;
-              
-              let newBody;
-              if (yamlContentPattern1.test(originalBody)) {
-                // Replace existing YAML Content field with code block
-                newBody = originalBody.replace(yamlContentPattern1, `$1${yamlContentField}\n\n`);
-                console.log('✅ Replaced existing YAML Content field (with code block)');
-              } else if (yamlContentPattern2.test(originalBody)) {
-                // Replace existing YAML Content field (without code block, may be empty or placeholder)
-                newBody = originalBody.replace(yamlContentPattern2, `$1${yamlContentField}\n\n`);
-                console.log('✅ Replaced existing YAML Content field (without code block)');
-              } else {
-                // Insert YAML Content field after the file selection field
-                // Match: ### Which YAML file do you want to edit?\n\nvalue\n\n
-                const fileFieldPattern = /(###\s*Which YAML file do you want to edit\?[^\n]*\n\n?[^\n]+\n\n?)/i;
-                if (fileFieldPattern.test(originalBody)) {
-                  newBody = originalBody.replace(fileFieldPattern, `$1### YAML Content\n\n${yamlContentField}\n\n`);
-                  console.log('✅ Inserted YAML Content field after file selection');
-                } else {
-                  // Fallback: append at the end
-                  newBody = originalBody + `\n\n### YAML Content\n\n${yamlContentField}\n\n`;
-                  console.log('✅ Appended YAML Content field at the end');
-                }
+
+              const yamlContentPattern = /(###\s*YAML Content\s*\n\n?)([\s\S]*?)(?=\n### |\n---|$)/i;
+              if (yamlContentPattern.test(originalBody)) {
+                originalBody = originalBody.replace(
+                  yamlContentPattern,
+                  '$1_Filled below as one editable box per item. Drag photos inside each event or partner text block._\n\n'
+                );
               }
-              
-              // Add instructions at the end
-              const instructions = [
-                '\n---\n',
-                '> 📝 **How to edit:**',
-                '> 1. Edit the YAML content in the **YAML Content** field above',
-                '> 2. To add images: drag and drop images into the comment box, or paste image URLs',
-                '> 3. Click **"Update comment"** to save',
-                '> 4. The system will automatically create a Pull Request with your changes',
-                '',
-                '> ⚠️ **Important:** Make sure to keep the \\`\\`\\`yaml code block markers!',
-                '> 📷 **Images:** Uploaded images will be automatically saved to `assets/img/` directory'
-              ].join('\n');
-              
-              newBody = newBody + instructions;
-              
+
+              const newBody = originalBody.replace(/\s+$/, '') + '\n\n---\n\n' + itemsMarkdown;
               await github.rest.issues.update({
                 ...context.repo,
                 issue_number,
                 body: newBody
               });
-              
-              console.log(`✅ Updated issue #${issue_number} with YAML content from ${filePath}`);
+              console.log(`Updated issue #${issue_number} with editable YAML items from ${filePath}`);
             } catch (err) {
-              console.error(`❌ Failed to read YAML file: ${filePath}`, err);
+              console.error(`Failed to prefill YAML file: ${filePath}`, err);
               const originalBody = context.payload.issue.body || '';
-              const failBody = originalBody + `\n\n---\n\n⚠️ Unable to find or read YAML file: \`${filePath}\`\n\nError: ${err.message}`;
               await github.rest.issues.update({
                 ...context.repo,
                 issue_number,
-                body: failBody
+                body: originalBody + `\n\n---\n\n⚠️ Unable to find or read YAML file: \`${filePath}\`\n\nError: ${err.message}`
               });
             }
-

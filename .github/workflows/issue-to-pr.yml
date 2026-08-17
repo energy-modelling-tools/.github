@@ -48,6 +48,7 @@ jobs:
             const filePatterns = [
               /###\s*Which file do you want to edit\?\s*\n\s*([^\n]+)/i,
               /###\s*Which file do you want to edit\?\s*\n\n\s*([^\n]+)/i,
+              /Editable sections from `([^`]+)`/i,
               /Prefilled Content from `([^`]+)`/i
             ];
             
@@ -55,31 +56,52 @@ jobs:
             for (const pattern of filePatterns) {
               const match = body.match(pattern);
               if (match && match[1]) {
-                filePath = match[1].trim();
+                filePath = match[1].trim().replace(/\s*\([^)]*\)\s*$/, '').trim();
                 break;
               }
             }
             
-            // extract the edited content (Markdown only)
+            const sectionUpdates = {};
+            const sectionRe = /####\s*Section:\s*(\S+)[ \t]*\n([\s\S]*?)```text\n([\s\S]*?)```/g;
+            let sectionMatch;
+            while ((sectionMatch = sectionRe.exec(body)) !== null) {
+              const meta = sectionMatch[2] || '';
+              let heading = '';
+              let link = '';
+              let mode = null;
+              for (const raw of meta.split('\n')) {
+                if (/^heading:/i.test(raw)) {
+                  mode = 'heading';
+                  heading = raw.replace(/^heading:\s*/i, '');
+                } else if (/^link:/i.test(raw)) {
+                  mode = 'link';
+                  link = raw.replace(/^link:\s*/i, '');
+                } else if (mode === 'heading') {
+                  heading += ' ' + raw.trim();
+                } else if (mode === 'link') {
+                  link += raw.trim();
+                }
+              }
+              heading = heading.replace(/\s+/g, ' ').trim();
+              const mdHeading = heading.match(/^\[(.*)\]\((https?:[^)]+)\)$/);
+              if (mdHeading) {
+                heading = mdHeading[1].replace(/\*\*/g, '').trim();
+                if (!link) link = mdHeading[2].trim();
+              }
+              heading = heading.replace(/\*\*/g, '').trim();
+              if (heading === '[' || heading === ']' || heading === '[]') heading = '';
+              sectionUpdates[sectionMatch[1].trim()] = {
+                heading,
+                link: link.trim(),
+                text: sectionMatch[3].replace(/\n$/, '')
+              };
+            }
+            const hasSections = Object.keys(sectionUpdates).length > 0;
+
             const markdownMatch = body.match(/```markdown\s*\n([\s\S]*?)\n```/);
             const newContent = markdownMatch ? markdownMatch[1] : null;
-            
-            // This workflow only handles Markdown files
             const isYaml = false;
-            
-            // extract the image URLs (from the issue's images)
-            const imageUrls = [];
-            // Match Markdown image format: ![alt](url)
-            const imagePattern = /!\[.*?\]\((https?:\/\/[^\s\)]+\.(jpg|jpeg|png|gif|svg|webp))\)/gi;
-            let imageMatch;
-            while ((imageMatch = imagePattern.exec(body)) !== null) {
-              imageUrls.push(imageMatch[1]);
-            }
-            // match the GitHub automatically uploaded images
-            const githubImagePattern = /https:\/\/user-images\.githubusercontent\.com\/[^\s\)]+/g;
-            const githubImages = body.match(githubImagePattern) || [];
-            imageUrls.push(...githubImages);
-            
+
             if (!filePath) {
               console.error('No file path found');
               await github.rest.issues.createComment({
@@ -90,24 +112,31 @@ jobs:
               core.setOutput('should_run', 'false');
               return;
             }
-            
-            if (!newContent) {
-              console.error('No content found in markdown code block');
+
+            if (!hasSections && !newContent) {
+              console.error('No edited content found');
               await github.rest.issues.createComment({
                 ...context.repo,
                 issue_number: context.issue.number,
-                body: '❌ Cannot find edited content. Please make sure to edit the content in the markdown code block.'
+                body: '❌ Cannot find edited content. Please edit the `text` (or `markdown`) code blocks, then save.'
               });
               core.setOutput('should_run', 'false');
               return;
             }
-            
+
+            const editMode = hasSections ? 'sections' : 'full';
             console.log('✅ File path:', filePath);
-            console.log('✅ New content length:', newContent.length);
-            console.log('✅ Processing as Markdown file');
-            
+            console.log('✅ Edit mode:', editMode);
+            if (hasSections) {
+              console.log('✅ CMS sections:', Object.keys(sectionUpdates).join(', '));
+            } else {
+              console.log('✅ New content length:', newContent.length);
+            }
+
             core.setOutput('filePath', filePath);
-            core.setOutput('newContent', newContent);
+            core.setOutput('editMode', editMode);
+            core.setOutput('newContent', hasSections ? '' : newContent);
+            core.setOutput('sectionsB64', Buffer.from(JSON.stringify(sectionUpdates), 'utf8').toString('base64'));
             core.setOutput('isYaml', 'false');
             core.setOutput('imageUrls', JSON.stringify([]));
             core.setOutput('should_run', 'true');
@@ -257,9 +286,12 @@ jobs:
         env:
           FILE_PATH: ${{ steps.parse.outputs.filePath }}
           NEW_CONTENT: ${{ steps.parse.outputs.newContent }}
+          EDIT_MODE: ${{ steps.parse.outputs.editMode }}
+          SECTIONS_B64: ${{ steps.parse.outputs.sectionsB64 }}
           HAS_FRONTMATTER: ${{ steps.prepare.outputs.has_frontmatter }}
           FRONTMATTER: ${{ steps.prepare.outputs.frontmatter }}
           IS_YAML: ${{ steps.parse.outputs.isYaml }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         uses: actions/github-script@v7
         with:
           script: |
@@ -267,35 +299,356 @@ jobs:
             const path = require('path');
             const filePath = process.env.FILE_PATH;
             const newContent = process.env.NEW_CONTENT;
+            const editMode = process.env.EDIT_MODE || 'full';
             const hasFrontmatter = process.env.HAS_FRONTMATTER === 'true';
             const frontmatter = process.env.FRONTMATTER || '';
-            const isYaml = process.env.IS_YAML === 'true';
-            
-            console.log('Debug info:');
-            console.log('- File path:', filePath);
-            console.log('- Is YAML:', isYaml);
-            console.log('- Has frontmatter:', hasFrontmatter);
-            console.log('- Frontmatter length:', frontmatter.length);
-            console.log('- New content length:', newContent.length);
-            
-            // Ensure the directory exists
+
             const dir = path.dirname(filePath);
             if (!fs.existsSync(dir)) {
               fs.mkdirSync(dir, { recursive: true });
             }
-            
+
             let finalContent;
-            // This workflow only handles Markdown files
-            if (hasFrontmatter && frontmatter.trim()) {
-              // Preserve front matter
+
+            if (editMode === 'sections') {
+              const rawUpdates = JSON.parse(
+                Buffer.from(process.env.SECTIONS_B64 || '', 'base64').toString('utf8') || '{}'
+              );
+              const updates = {};
+              for (const [id, value] of Object.entries(rawUpdates)) {
+                updates[id] = (value && typeof value === 'object')
+                  ? { heading: value.heading || '', link: value.link || '', text: value.text || '' }
+                  : { heading: '', link: '', text: String(value || '') };
+              }
+              console.log('Applying CMS section updates:', Object.keys(updates));
+
+              const escapeHtml = (s) => String(s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+
+              const slug = (s) => String(s || '')
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '_')
+                .replace(/^_|_$/g, '') || 'image';
+
+              const isPlaceholder = (id, heading, text) => {
+                const t = String(text || '').trim();
+                if (id === 'new_section_id' || String(id).startsWith('new_')) {
+                  if (!t || t.startsWith('Write the new paragraph here')) return true;
+                  if ((!heading || heading === 'New heading') && t.startsWith('Write the new paragraph here')) return true;
+                  return false;
+                }
+                if (t.startsWith('Write the new paragraph here')) return true;
+                return false;
+              };
+
+              const https = require('https');
+              const http = require('http');
+              const normalizeImageUrl = (raw) => String(raw || '')
+                .trim()
+                .replace(/^["'<>]+|["'<>]+$/g, '')
+                .replace(/&quot;/g, '');
+              const isExampleUrl = (url) => !url
+                || url.includes('...')
+                || /user-attachments\/?$/i.test(url)
+                || url.includes('example.com');
+              const download = (url, destPath) => new Promise((resolve, reject) => {
+                let parsed;
+                try { parsed = new URL(url); } catch (err) { reject(err); return; }
+                const lib = parsed.protocol === 'https:' ? https : http;
+                const headers = {
+                  'User-Agent': 'energy-modelling-tools-image-sync',
+                  'Accept': '*/*'
+                };
+                if (process.env.GITHUB_TOKEN && /github\.com$/i.test(parsed.hostname)) {
+                  headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+                }
+                const req = lib.get({
+                  hostname: parsed.hostname,
+                  path: parsed.pathname + parsed.search,
+                  headers
+                }, (res) => {
+                  if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                    return download(res.headers.location, destPath).then(resolve).catch(reject);
+                  }
+                  if (res.statusCode !== 200) {
+                    reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+                    return;
+                  }
+                  const ct = res.headers['content-type'] || '';
+                  const fileStream = fs.createWriteStream(destPath);
+                  res.pipe(fileStream);
+                  fileStream.on('finish', () => {
+                    fileStream.close();
+                    resolve(ct);
+                  });
+                  fileStream.on('error', reject);
+                });
+                req.on('error', reject);
+              });
+
+              const extFromType = (ct) => {
+                if (ct.includes('png')) return 'png';
+                if (ct.includes('jpeg') || ct.includes('jpg')) return 'jpg';
+                if (ct.includes('gif')) return 'gif';
+                if (ct.includes('webp')) return 'webp';
+                if (ct.includes('svg')) return 'svg';
+                return 'png';
+              };
+
+              const saveDir = 'assets/img';
+              if (!fs.existsSync(saveDir)) fs.mkdirSync(saveDir, { recursive: true });
+
+              for (const section of Object.values(updates)) {
+                const imageRe = /!\[([^\]]*)\]\(\s*<?["']?(https?:[^)\s"'<>]+)["']?>?\s*\)/g;
+                let imgMatch;
+                const replacements = [];
+                while ((imgMatch = imageRe.exec(section.text)) !== null) {
+                  const alt = imgMatch[1] || 'image';
+                  const url = normalizeImageUrl(imgMatch[2]);
+                  if (isExampleUrl(url)) {
+                    console.log(`⏭️ Skipping example image URL: ${url}`);
+                    continue;
+                  }
+                  const isRemote = /github\.com\/user-attachments|user-images\.githubusercontent\.com|githubusercontent\.com/i.test(url);
+                  if (!isRemote) continue;
+                  const base = slug(alt);
+                  let dest = path.join(saveDir, `${base}.png`);
+                  try {
+                    const ct = await download(url, dest);
+                    const ext = extFromType(ct);
+                    const finalDest = path.join(saveDir, `${base}.${ext}`);
+                    if (finalDest !== dest) {
+                      if (fs.existsSync(finalDest)) fs.unlinkSync(finalDest);
+                      fs.renameSync(dest, finalDest);
+                      dest = finalDest;
+                    }
+                    const localPath = `../assets/img/${path.basename(dest)}`;
+                    replacements.push({ from: imgMatch[0], to: `![${alt}](${localPath})` });
+                    console.log(`✅ Saved image ${dest}`);
+                  } catch (err) {
+                    console.log(`⚠️ Could not download ${url}: ${err.message}`);
+                  }
+                }
+                for (const { from, to } of replacements) {
+                  section.text = section.text.split(from).join(to);
+                }
+              }
+
+              const editableToHtml = (text) => {
+                let s = escapeHtml(String(text || '').trim());
+                s = s.replace(/!\[([^\]]*)\]\(\s*<?["']?([^)\s"'<>]+)["']?>?\s*\)/g, '<img src="$2" alt="$1" class="img-fluid my-3" />');
+                s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+                s = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+                s = s.replace(/\n/g, '<br>\n        ');
+                return s;
+              };
+
+              const rebuildSectionInner = (originalInner, editableText) => {
+                const originalTrim = String(originalInner || '').trim();
+                const textTrim = String(editableText || '').trim();
+                if (!originalTrim && !textTrim) return originalInner || '';
+                if (/<ul\b/i.test(originalInner)) {
+                  const ulOpen = (originalInner.match(/<ul\b[^>]*>/i) || ['<ul>'])[0];
+                  const items = String(editableText || '').split('\n')
+                    .map((line) => line.replace(/^\s*[-*]\s+/, '').trim())
+                    .filter(Boolean);
+                  const lis = items.map((item) => `          <li>${editableToHtml(item)}</li>`).join('\n');
+                  return `\n        ${ulOpen}\n${lis}\n        </ul>\n      `;
+                }
+                const html = editableToHtml(editableText);
+                const pMatch = originalInner.match(/<p\b[^>]*>/i);
+                if (pMatch) {
+                  const open = pMatch[0];
+                  const start = originalInner.search(/<p\b[^>]*>/i);
+                  const end = originalInner.lastIndexOf('</p>');
+                  if (end > start) {
+                    const before = originalInner.slice(0, start);
+                    const after = originalInner.slice(end + 4);
+                    return `${before}${open}\n        ${html}\n      </p>${after}`;
+                  }
+                }
+                if (!textTrim) return originalInner || '';
+                return `\n      <p class="alt-lead text-gray text-justify-between col-md-15 mx-auto">\n        ${html}\n      </p>\n      `;
+              };
+
+              const original = fs.readFileSync(filePath, 'utf8');
+              const existingIds = new Set();
+              const cmsIdRe = /<!--\s*CMS:section\s+id=([^\s]+)\s*-->/g;
+              let idMatch;
+              while ((idMatch = cmsIdRe.exec(original)) !== null) existingIds.add(idMatch[1]);
+
+              const keptIds = Object.keys(updates).filter((id) => {
+                if (id === 'new_section_id' || String(id).startsWith('new_')) {
+                  return !isPlaceholder(id, updates[id].heading, updates[id].text);
+                }
+                return true;
+              });
+
+              const removeSection = (fileContent, sectionId) => {
+                const marker = '<!-- CMS:section id=' + sectionId + ' -->';
+                const idx = fileContent.indexOf(marker);
+                if (idx < 0) return fileContent;
+                const endMarker = '<!-- /CMS:section -->';
+                const endIdx = fileContent.indexOf(endMarker, idx);
+                if (endIdx < 0) return fileContent;
+                let from = idx;
+                const to = endIdx + endMarker.length;
+                const before = fileContent.slice(0, idx);
+                const hRe = /<h[1-6]\b[^>]*>[\s\S]*?<\/h[1-6]>/gi;
+                let last = null;
+                let hm;
+                while ((hm = hRe.exec(before))) last = hm;
+                if (last && (idx - (last.index + last[0].length) <= 500)) from = last.index;
+                return fileContent.slice(0, from) + fileContent.slice(to);
+              };
+
+              let next = original;
+              if (keptIds.length > 0) {
+                for (const id of [...existingIds]) {
+                  if (!keptIds.includes(id)) {
+                    next = removeSection(next, id);
+                    existingIds.delete(id);
+                    console.log('Removed CMS section', id);
+                  }
+                }
+              }
+
+              next = next.replace(
+                /<!--\s*CMS:section\s+id=([^\s]+)\s*-->([\s\S]*?)<!--\s*\/CMS:section\s*-->/g,
+                (full, id, inner) => {
+                  if (!Object.prototype.hasOwnProperty.call(updates, id)) return full;
+                  if (isPlaceholder(id, updates[id].heading, updates[id].text)) return full;
+                  return `<!-- CMS:section id=${id} -->${rebuildSectionInner(inner, updates[id].text)}<!-- /CMS:section -->`;
+                }
+              );
+
+              const headingInnerToHtml = (editable, originalTag, newHref) => {
+                const originalInner = (originalTag.match(/<h[1-6]\b[^>]*>([\s\S]*)<\/h[1-6]>/i) || ['', ''])[1];
+                let text = String(editable || '').trim();
+                const md = text.match(/^\[(.*)\]\((https?:[^)]+)\)$/s);
+                if (md) {
+                  text = md[1];
+                  if (!newHref) newHref = md[2].trim();
+                }
+                text = text.replace(/\*\*/g, '').replace(/\s+/g, ' ').trim();
+                if (!text || text === '[' || text === ']' || text === '[]') return originalInner;
+                const safe = escapeHtml(text);
+                if (/<a\b/i.test(originalInner)) {
+                  return originalInner.replace(/<a\b([^>]*)>([\s\S]*)<\/a>/i, (_, attrs, inner) => {
+                    let nextAttrs = attrs;
+                    if (newHref) {
+                      if (/href=/i.test(nextAttrs)) nextAttrs = nextAttrs.replace(/href=["'][^"']*["']/, 'href="' + newHref + '"');
+                      else nextAttrs += ' href="' + newHref + '"';
+                    }
+                    const body = /<strong/i.test(inner) ? ('<strong>' + safe + '</strong>') : safe;
+                    return '<a' + nextAttrs + '>' + body + '</a>';
+                  });
+                }
+                if (/<strong/i.test(originalInner)) return '<strong>' + safe + '</strong>';
+                return safe;
+              };
+
+              const updateHeading = (fileContent, sectionId, newHeading, newHref) => {
+                if (!newHeading || newHeading === '[' || newHeading === ']') return fileContent;
+                const marker = '<!-- CMS:section id=' + sectionId + ' -->';
+                const idx = fileContent.indexOf(marker);
+                if (idx < 0) return fileContent;
+                const before = fileContent.slice(0, idx);
+                const hRe = /<h[1-6]\b[^>]*>[\s\S]*?<\/h[1-6]>/gi;
+                let last = null;
+                let m;
+                while ((m = hRe.exec(before))) last = m;
+                if (!last) {
+                  const inserted = '<h2 class="aboutpage-subtitle text-left mb-3 mt-lg-6">' + escapeHtml(newHeading) + '</h2>\n' + marker;
+                  return fileContent.slice(0, idx) + inserted + fileContent.slice(idx + marker.length);
+                }
+                if (idx - (last.index + last[0].length) > 500) return fileContent;
+                const innerHtml = headingInnerToHtml(newHeading, last[0], newHref);
+                const replaced = last[0].replace(/>[\s\S]*<\/h([1-6])>/, (_, level) => '>' + innerHtml + '</h' + level + '>');
+                return fileContent.slice(0, last.index) + replaced + fileContent.slice(last.index + last[0].length);
+              };
+
+              const updateWrapLink = (fileContent, sectionId, newHref) => {
+                if (!newHref) return fileContent;
+                const marker = '<!-- CMS:section id=' + sectionId + ' -->';
+                const idx = fileContent.indexOf(marker);
+                if (idx < 0) return fileContent;
+                const before = fileContent.slice(0, idx);
+                const hRe = /<h[1-6]\b[^>]*>[\s\S]*?<\/h[1-6]>/gi;
+                let lastH = null;
+                let m;
+                while ((m = hRe.exec(before))) lastH = m;
+                const searchEnd = lastH ? lastH.index : idx;
+                const searchFrom = Math.max(0, searchEnd - 800);
+                const slice = fileContent.slice(searchFrom, searchEnd);
+                const aRe = /<a\b[^>]*href=["']\s*([^"']+)\s*["'][^>]*>/gi;
+                let lastA = null;
+                while ((m = aRe.exec(slice))) lastA = m;
+                if (!lastA) return fileContent;
+                const abs = searchFrom + lastA.index;
+                const newTag = lastA[0].replace(/href=["']\s*[^"']+\s*["']/, 'href="' + newHref + '"');
+                return fileContent.slice(0, abs) + newTag + fileContent.slice(abs + lastA[0].length);
+              };
+
+              for (const [id, section] of Object.entries(updates)) {
+                if (existingIds.has(id) && section.heading) {
+                  next = updateHeading(next, id, section.heading, section.link);
+                }
+                if (existingIds.has(id) && section.link) {
+                  next = updateWrapLink(next, id, section.link);
+                }
+              }
+
+              const newSectionHtml = (id, heading, text) => [
+                `<h2 class="aboutpage-subtitle text-left mb-3 mt-lg-6">${escapeHtml(heading || id)}</h2>`,
+                '<div class="col-md-12 animate-out mb-2">',
+                `<!-- CMS:section id=${id} -->`,
+                '<p class="alt-lead text-gray text-justify-between col-md-15 mx-auto">',
+                editableToHtml(text),
+                '</p>',
+                '<!-- /CMS:section -->',
+                '</div>'
+              ].join('\n');
+
+              for (const [rawId, section] of Object.entries(updates)) {
+                if (existingIds.has(rawId)) continue;
+                if (isPlaceholder(rawId, section.heading, section.text)) {
+                  console.log(`⏭️ Skipping placeholder section ${rawId}`);
+                  continue;
+                }
+                let id = rawId;
+                if (id === 'new_section_id') {
+                  id = 'about_' + slug(section.heading || 'new_section');
+                }
+                if (existingIds.has(id)) id = `${id}_${Date.now()}`;
+                const block = newSectionHtml(id, section.heading, section.text);
+                if (next.includes('<!-- Icon Links -->')) {
+                  next = next.replace('<!-- Icon Links -->', `${block}\n<!-- Icon Links -->`);
+                } else {
+                  const lastClose = next.lastIndexOf('<!-- /CMS:section -->');
+                  const afterDiv = lastClose >= 0 ? next.indexOf('</div>', lastClose) : -1;
+                  if (afterDiv >= 0) {
+                    next = next.slice(0, afterDiv + 6) + '\n' + block + next.slice(afterDiv + 6);
+                  } else {
+                    next += block;
+                  }
+                }
+                existingIds.add(id);
+                console.log(`✅ Added new CMS section ${id}`);
+              }
+
+              finalContent = next;
+              console.log('✅ Patched CMS sections in place; layout unchanged');
+            } else if (hasFrontmatter && frontmatter.trim()) {
               finalContent = `---\n${frontmatter}\n---\n${newContent}`;
               console.log('✅ Preserved front matter');
             } else {
-              // No front matter
               finalContent = newContent;
               console.log('⚠️ No front matter to preserve');
             }
-            
+
             fs.writeFileSync(filePath, finalContent, 'utf8');
             console.log(`✅ File updated: ${filePath}`);
 
