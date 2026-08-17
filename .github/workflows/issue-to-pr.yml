@@ -66,11 +66,33 @@ jobs:
             let sectionMatch;
             while ((sectionMatch = sectionRe.exec(body)) !== null) {
               const meta = sectionMatch[2] || '';
-              const headingLine = meta.match(/^heading:[ \t]*(.*)$/m);
-              const linkLine = meta.match(/^link:[ \t]*(.*)$/m);
+              let heading = '';
+              let link = '';
+              let mode = null;
+              for (const raw of meta.split('\n')) {
+                if (/^heading:/i.test(raw)) {
+                  mode = 'heading';
+                  heading = raw.replace(/^heading:\s*/i, '');
+                } else if (/^link:/i.test(raw)) {
+                  mode = 'link';
+                  link = raw.replace(/^link:\s*/i, '');
+                } else if (mode === 'heading') {
+                  heading += ' ' + raw.trim();
+                } else if (mode === 'link') {
+                  link += raw.trim();
+                }
+              }
+              heading = heading.replace(/\s+/g, ' ').trim();
+              const mdHeading = heading.match(/^\[(.*)\]\((https?:[^)]+)\)$/);
+              if (mdHeading) {
+                heading = mdHeading[1].replace(/\*\*/g, '').trim();
+                if (!link) link = mdHeading[2].trim();
+              }
+              heading = heading.replace(/\*\*/g, '').trim();
+              if (heading === '[' || heading === ']' || heading === '[]') heading = '';
               sectionUpdates[sectionMatch[1].trim()] = {
-                heading: headingLine ? headingLine[1].trim() : '',
-                link: linkLine ? linkLine[1].trim() : '',
+                heading,
+                link: link.trim(),
                 text: sectionMatch[3].replace(/\n$/, '')
               };
             }
@@ -502,38 +524,34 @@ jobs:
                 }
               );
 
-              const headingInnerToHtml = (editable, originalTag) => {
+              const headingInnerToHtml = (editable, originalTag, newHref) => {
                 const originalInner = (originalTag.match(/<h[1-6]\b[^>]*>([\s\S]*)<\/h[1-6]>/i) || ['', ''])[1];
-                const trimmed = String(editable || '').trim();
-                const mdLink = trimmed.match(/^\[([^\]]+)\]\((https?:[^)\s]+)\)$/);
-                const labelFrom = (s) => String(s || '').replace(/^\*\*|\*\*$/g, '').replace(/\*\*/g, '');
-                if (mdLink) {
-                  const label = labelFrom(mdLink[1]);
-                  if (/<a\b/i.test(originalInner)) {
-                    return originalInner.replace(/<a\b([^>]*)>[\s\S]*<\/a>/i, (_, attrs) => {
-                      let nextAttrs = attrs.replace(/href=["'][^"']*["']/, 'href="' + mdLink[2] + '"');
-                      if (!/href=/i.test(nextAttrs)) nextAttrs += ' href="' + mdLink[2] + '"';
-                      const inner = /<strong/i.test(originalInner)
-                        ? ('<strong>' + escapeHtml(label) + '</strong>')
-                        : escapeHtml(label);
-                      return '<a' + nextAttrs + '>' + inner + '</a>';
-                    });
-                  }
-                  return '<a href="' + mdLink[2] + '" target="_blank">' + escapeHtml(label) + '</a>';
+                let text = String(editable || '').trim();
+                const md = text.match(/^\[(.*)\]\((https?:[^)]+)\)$/s);
+                if (md) {
+                  text = md[1];
+                  if (!newHref) newHref = md[2].trim();
                 }
-                const text = escapeHtml(labelFrom(trimmed));
+                text = text.replace(/\*\*/g, '').replace(/\s+/g, ' ').trim();
+                if (!text || text === '[' || text === ']' || text === '[]') return originalInner;
+                const safe = escapeHtml(text);
                 if (/<a\b/i.test(originalInner)) {
                   return originalInner.replace(/<a\b([^>]*)>([\s\S]*)<\/a>/i, (_, attrs, inner) => {
-                    const body = /<strong/i.test(inner) ? ('<strong>' + text + '</strong>') : text;
-                    return '<a' + attrs + '>' + body + '</a>';
+                    let nextAttrs = attrs;
+                    if (newHref) {
+                      if (/href=/i.test(nextAttrs)) nextAttrs = nextAttrs.replace(/href=["'][^"']*["']/, 'href="' + newHref + '"');
+                      else nextAttrs += ' href="' + newHref + '"';
+                    }
+                    const body = /<strong/i.test(inner) ? ('<strong>' + safe + '</strong>') : safe;
+                    return '<a' + nextAttrs + '>' + body + '</a>';
                   });
                 }
-                if (/<strong/i.test(originalInner)) return '<strong>' + text + '</strong>';
-                return text;
+                if (/<strong/i.test(originalInner)) return '<strong>' + safe + '</strong>';
+                return safe;
               };
 
-              const updateHeading = (fileContent, sectionId, newHeading) => {
-                if (!newHeading) return fileContent;
+              const updateHeading = (fileContent, sectionId, newHeading, newHref) => {
+                if (!newHeading || newHeading === '[' || newHeading === ']') return fileContent;
                 const marker = '<!-- CMS:section id=' + sectionId + ' -->';
                 const idx = fileContent.indexOf(marker);
                 if (idx < 0) return fileContent;
@@ -547,7 +565,7 @@ jobs:
                   return fileContent.slice(0, idx) + inserted + fileContent.slice(idx + marker.length);
                 }
                 if (idx - (last.index + last[0].length) > 500) return fileContent;
-                const innerHtml = headingInnerToHtml(newHeading, last[0]);
+                const innerHtml = headingInnerToHtml(newHeading, last[0], newHref);
                 const replaced = last[0].replace(/>[\s\S]*<\/h([1-6])>/, (_, level) => '>' + innerHtml + '</h' + level + '>');
                 return fileContent.slice(0, last.index) + replaced + fileContent.slice(last.index + last[0].length);
               };
@@ -576,7 +594,7 @@ jobs:
 
               for (const [id, section] of Object.entries(updates)) {
                 if (existingIds.has(id) && section.heading) {
-                  next = updateHeading(next, id, section.heading);
+                  next = updateHeading(next, id, section.heading, section.link);
                 }
                 if (existingIds.has(id) && section.link) {
                   next = updateWrapLink(next, id, section.link);

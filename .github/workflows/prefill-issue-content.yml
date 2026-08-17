@@ -166,13 +166,19 @@ jobs:
                   const last = headings[headings.length - 1];
                   const dist = cmsMatch.index - (last.index + last[0].length);
                   if (dist < 500) {
-                    heading = htmlToEditable(last[2]);
+                    const innerA = String(last[2] || '').match(/<a\b[^>]*href=["']\s*([^"']+?)\s*["'][^>]*>/i);
+                    if (innerA) link = innerA[1].trim();
+                    heading = htmlToEditable(last[2])
+                      .replace(/\[([^\]]*)\]\((https?:[^)]+)\)/g, '$1')
+                      .replace(/\*\*/g, '')
+                      .replace(/\s+/g, ' ')
+                      .trim();
                     const beforeH = before.slice(0, last.index);
                     const aTags = [...beforeH.matchAll(/<a\b[^>]*href=["']\s*([^"']+?)\s*["'][^>]*>/gi)];
                     if (aTags.length) {
                       const a = aTags[aTags.length - 1];
                       const afterA = beforeH.slice(a.index + a[0].length);
-                      if (!afterA.includes('</a>')) link = a[1].trim();
+                      if (!afterA.includes('</a>') && !link) link = a[1].trim();
                     }
                   }
                 }
