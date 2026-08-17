@@ -257,9 +257,31 @@ jobs:
             fs.writeFileSync(filePath, process.env.YAML_CONTENT, 'utf8');
             console.log('YAML file updated from raw yaml block:', filePath);
 
+      - name: Report images that could not be saved
+        if: steps.parse.outputs.should_run == 'true' && steps.parse.outputs.editMode == 'blocks'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            if (!fs.existsSync('image_failures.txt')) return;
+            const lines = fs.readFileSync('image_failures.txt', 'utf8').split('\n').filter(Boolean);
+            if (lines.length === 0) return;
+            const body = [
+              '⚠️ Your text was saved, but these images could not be downloaded, so the previous picture was kept:',
+              '',
+              ...lines.map((line) => '- ' + line),
+              '',
+              'Please re-drag the image inside that block and save again. Make sure the URL has no quotes around it.'
+            ].join('\n');
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: context.issue.number,
+              body
+            });
+
       - name: Remove helper checkout
         if: steps.parse.outputs.should_run == 'true'
-        run: rm -rf .emt-scripts uploaded_files.txt
+        run: rm -rf .emt-scripts uploaded_files.txt image_failures.txt
 
       - name: Create Pull Request
         if: steps.parse.outputs.should_run == 'true'

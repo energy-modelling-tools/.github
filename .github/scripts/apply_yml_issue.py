@@ -74,6 +74,16 @@ def is_placeholder(url: str) -> bool:
     return not url or bool(PLACEHOLDER_RE.search(url))
 
 
+class DropAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    """GitHub signs the attachment host itself and rejects a forwarded token."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urllib.parse.urlparse(newurl).hostname != req.host:
+            new.remove_header("Authorization")
+        return new
+
+
 def download(url: str, dest_base: pathlib.Path) -> pathlib.Path:
     token = os.environ.get("GITHUB_TOKEN", "")
     parsed = urllib.parse.urlparse(url)
@@ -83,8 +93,9 @@ def download(url: str, dest_base: pathlib.Path) -> pathlib.Path:
     }
     if token and parsed.hostname and "github.com" in parsed.hostname:
         headers["Authorization"] = f"Bearer {token}"
+    opener = urllib.request.build_opener(DropAuthOnRedirect)
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with opener.open(req, timeout=60) as resp:
         content_type = resp.info().get_content_type()
         data = resp.read()
         final_url = resp.geturl()
@@ -104,11 +115,24 @@ def download(url: str, dest_base: pathlib.Path) -> pathlib.Path:
     return dest
 
 
-def resolve_media(src: str, alt: str, dest_dir: pathlib.Path, yaml_path: str, saved: list) -> str:
+def resolve_media(
+    src: str,
+    alt: str,
+    dest_dir: pathlib.Path,
+    yaml_path: str,
+    saved: list,
+    failures: list,
+    fallback: str = "",
+) -> str:
     src = (src or "").strip().strip("\"'")
     if is_placeholder(src) or not is_remote(src):
         return src
-    dest = download(src, dest_dir / safe_name(alt))
+    try:
+        dest = download(src, dest_dir / safe_name(alt))
+    except Exception as err:
+        failures.append(f"{alt}: {type(err).__name__} {err}")
+        print(f"Could not download {src} for {alt}: {err}")
+        return fallback
     saved.append(dest.as_posix())
     if yaml_path == "relative":
         return f"../{dest.as_posix()}"
@@ -124,13 +148,38 @@ def str_field(item: dict, *keys: str) -> str:
     return ""
 
 
+def existing_media(file_path: pathlib.Path, list_key: str, media_key: str) -> dict:
+    """Map an item's title to the media path already committed, for fallbacks."""
+    if not file_path.exists():
+        return {}
+    try:
+        data = yaml.safe_load(file_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    items = data.get(list_key) if isinstance(data, dict) else data
+    known = {}
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        media = str(item.get(media_key) or "").strip()
+        if not media:
+            continue
+        for key in ("title", "alt", "display_name", "name"):
+            value = str(item.get(key) or "").strip()
+            if value:
+                known[value] = media
+    return known
+
+
 def main() -> None:
     payload = json.loads(sys.stdin.read())
     file_path = pathlib.Path(payload["file"])
     name = file_path.name
     saved = []
+    failures = []
 
     if name == "learning_events.yml":
+        previous = existing_media(file_path, "events", "image")
         events = []
         for event in payload.get("events") or []:
             alt = str_field(event, "alt", "title") or "event"
@@ -140,6 +189,8 @@ def main() -> None:
                 pathlib.Path("assets/img/EMP"),
                 "relative",
                 saved,
+                failures,
+                previous.get(str_field(event, "title")) or previous.get(alt, ""),
             )
             outputs = []
             for out in event.get("outputs") or []:
@@ -188,6 +239,7 @@ def main() -> None:
         dump_yaml(pubs, file_path)
 
     elif name == "orgs.yml":
+        previous = existing_media(file_path, "partners", "logo")
         partners = []
         for partner in payload.get("partners") or []:
             display = str_field(partner, "display_name", "name") or "partner"
@@ -197,6 +249,8 @@ def main() -> None:
                 pathlib.Path("assets/img/partners"),
                 "root",
                 saved,
+                failures,
+                previous.get(str_field(partner, "name")) or previous.get(display, ""),
             )
             partners.append(
                 {
@@ -225,6 +279,10 @@ def main() -> None:
 
     pathlib.Path("uploaded_files.txt").write_text(
         "\n".join(saved) + ("\n" if saved else ""),
+        encoding="utf-8",
+    )
+    pathlib.Path("image_failures.txt").write_text(
+        "\n".join(failures) + ("\n" if failures else ""),
         encoding="utf-8",
     )
     print(f"Wrote {file_path}")
