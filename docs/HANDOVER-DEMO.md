@@ -20,6 +20,9 @@ Have [EDITING-CHEATSHEET.md](EDITING-CHEATSHEET.md) printed or shared.
 
 - Show the live site, then the repo. Say: everything is edited from the **Issues** tab.
 - Name who merges Pull Requests after today, and their backup.
+- Say once, plainly: this runs entirely on GitHub. If GitHub is having problems the
+  editor stops working, and [githubstatus.com](https://www.githubstatus.com) will say so.
+  That way nobody mistakes an outage for a broken system.
 
 ## 0:05–0:20 Demo 1 — change page text and a title
 
@@ -73,6 +76,7 @@ needs to fix.
 
 | If | Do |
 |---|---|
+| Nothing works — pages 404, issues or Actions hang | Check [githubstatus.com](https://www.githubstatus.com) first. During an outage, stop demoing and reschedule; nothing here can be fixed from your side. |
 | No boxes appear after 1 min | Refresh again; check a file was selected in the form |
 | No PR appears | **Actions** tab → open the latest run → read the failed step |
 | PR fails with "not permitted to create or approve pull requests" | Org Settings → Actions → General → Workflow permissions |
