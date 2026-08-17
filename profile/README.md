@@ -59,8 +59,8 @@ FFRM analyzes strategies for reducing fossil fuel dependence and transitioning t
 
 Site content is edited from each repository's **Issues** tab — no code, no local setup.
 
-- [Editing cheat sheet](../docs/EDITING-CHEATSHEET.md) — for model managers
-- [Maintenance guide](../docs/MAINTENANCE.md) — for developers
+- [Editing cheat sheet](https://github.com/energy-modelling-tools/.github/blob/main/docs/EDITING-CHEATSHEET.md) — for model managers
+- [Maintenance guide](https://github.com/energy-modelling-tools/.github/blob/main/docs/MAINTENANCE.md) — for developers
 
 ## 📚 Purpose
 
