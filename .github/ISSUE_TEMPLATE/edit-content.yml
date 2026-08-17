@@ -1,4 +1,4 @@
-name: "Edit content (auto prefill)"
+name: "Edit content"
 description: "Edit page text and headings. Pick a file — the issue is filled after you submit."
 title: "Edit request: "
 labels: ["content-edit"]

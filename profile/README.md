@@ -55,6 +55,13 @@ FinTrack helps track and monitor financial flows and investments in energy proje
 
 FFRM analyzes strategies for reducing fossil fuel dependence and transitioning to renewable energy sources.
 
+## ✏️ Editing a tool website
+
+Site content is edited from each repository's **Issues** tab — no code, no local setup.
+
+- [Editing cheat sheet](../docs/EDITING-CHEATSHEET.md) — for model managers
+- [Maintenance guide](../docs/MAINTENANCE.md) — for developers
+
 ## 📚 Purpose
 
 This `.github` repository serves as:
