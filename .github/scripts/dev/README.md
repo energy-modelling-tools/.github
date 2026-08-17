@@ -51,3 +51,5 @@ extractor will fail loudly — update the patterns at the bottom of the script.
   pattern truncated them.
 - A blank line means a paragraph break in the text box but is only source wrapping in
   the HTML, so the two sides need different normalisation.
+- New About sections inserted at `<!-- Icon Links -->` sit outside the inner content
+  column and look shifted left. They must follow the last existing section.

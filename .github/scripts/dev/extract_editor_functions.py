@@ -34,6 +34,7 @@ parts = [
     grab(topr, r"^\s*const editableToHtml = ", r"\n\s*\};"),
     grab(topr, r"^\s*const rebuildSectionInner = ", r"\n\s*\};"),
     grab(topr, r"^\s*// Reduce HTML and editable text", r"\n\s*const headingText[\s\S]*?\n\s*\);"),
+    grab(topr, r"^\s*const insertNewSectionBlock = ", r"\n\s*\};"),
 ]
 
 out = "\n\n".join(parts)
@@ -41,7 +42,7 @@ out = "\n\n".join(parts)
 out = re.sub(r"^const cmsSections.*$", "", out, flags=re.M)
 out += """
 
-module.exports = { htmlToEditable, editableToHtml, rebuildSectionInner, normalizeForCompare, headingText };
+module.exports = { htmlToEditable, editableToHtml, rebuildSectionInner, normalizeForCompare, headingText, insertNewSectionBlock };
 """
 pathlib.Path("/tmp/rt-test/shipped.js").write_text(out, encoding="utf-8")
 print("wrote shipped.js")

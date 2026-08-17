@@ -95,6 +95,9 @@ after any change to the prefill or rebuild logic.
   flag; passing it wrongly makes real edits look unchanged and silently drops them.
 - **DOI URLs contain parentheses** (`S2542-5196(24)00209-2`). Markdown link patterns
   must allow one balanced pair: `\(((?:[^()\s]|\([^()]*\))+)\)`.
+- **New About sections must not land at `<!-- Icon Links -->`** — that comment sits
+  outside the inner content column. Insert after the last section's wrapping
+  `</div>` via `insertNewSectionBlock`, or the new heading looks shifted left.
 - **Never write temp files into the checkout** — `create-pull-request` commits
   everything. Reports go to `EMT_REPORT_DIR` (`runner.temp`).
 - **Image download failures must not fail the run** — `resolve_media` falls back to the

@@ -661,6 +661,20 @@ jobs:
                 '</div>'
               ].join('\n');
 
+              // Sit next to the last existing section (after its wrapping </div>).
+              // Do not insert at <!-- Icon Links -->: that comment lives outside the
+              // inner content column, so the new block misses the padding every
+              // other About section has and looks shifted left.
+              const insertNewSectionBlock = (fileContent, block) => {
+                const marker = '<!-- /CMS:section -->';
+                const lastClose = fileContent.lastIndexOf(marker);
+                if (lastClose < 0) return fileContent + '\n' + block;
+                const fromMarker = fileContent.slice(lastClose);
+                const wrapped = fromMarker.match(/^<!-- \/CMS:section -->\s*<\/div>/);
+                const at = lastClose + (wrapped ? wrapped[0].length : marker.length);
+                return fileContent.slice(0, at) + '\n' + block + fileContent.slice(at);
+              };
+
               for (const [rawId, section] of Object.entries(updates)) {
                 if (existingIds.has(rawId)) continue;
                 if (isPlaceholder(rawId, section.heading, section.text)) {
@@ -673,17 +687,7 @@ jobs:
                 }
                 if (existingIds.has(id)) id = `${id}_${Date.now()}`;
                 const block = newSectionHtml(id, section.heading, section.text);
-                if (next.includes('<!-- Icon Links -->')) {
-                  next = next.replace('<!-- Icon Links -->', `${block}\n<!-- Icon Links -->`);
-                } else {
-                  const lastClose = next.lastIndexOf('<!-- /CMS:section -->');
-                  const afterDiv = lastClose >= 0 ? next.indexOf('</div>', lastClose) : -1;
-                  if (afterDiv >= 0) {
-                    next = next.slice(0, afterDiv + 6) + '\n' + block + next.slice(afterDiv + 6);
-                  } else {
-                    next += block;
-                  }
-                }
+                next = insertNewSectionBlock(next, block);
                 existingIds.add(id);
                 console.log(`✅ Added new CMS section ${id}`);
               }
