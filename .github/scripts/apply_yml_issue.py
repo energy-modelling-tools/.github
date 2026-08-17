@@ -277,11 +277,14 @@ def main() -> None:
     else:
         raise SystemExit(f"Unsupported YAML file: {name}")
 
-    pathlib.Path("uploaded_files.txt").write_text(
+    # Keep reports outside the checkout so they never land in the pull request.
+    report_dir = pathlib.Path(os.environ.get("EMT_REPORT_DIR") or ".")
+    report_dir.mkdir(parents=True, exist_ok=True)
+    (report_dir / "uploaded_files.txt").write_text(
         "\n".join(saved) + ("\n" if saved else ""),
         encoding="utf-8",
     )
-    pathlib.Path("image_failures.txt").write_text(
+    (report_dir / "image_failures.txt").write_text(
         "\n".join(failures) + ("\n" if failures else ""),
         encoding="utf-8",
     )
