@@ -133,11 +133,14 @@ jobs:
                   s = s.replace(/<[^>]+>/g, '');
                   return decodeEntities(s).replace(/\s+/g, ' ').trim();
                 };
+                // Source line wrapping is layout, not content. Mark the breaks that
+                // are real so the rest of the whitespace can be collapsed safely.
+                const BREAK = '\u0001';
                 let s = String(html || '').trim();
-                s = s.replace(/<li\b[^>]*>([\s\S]*?)<\/li>/gi, (_, inner) => `\n- ${inlineFormat(inner)}`);
-                s = s.replace(/<\/p>\s*<p\b[^>]*>/gi, '\n\n');
+                s = s.replace(/<li\b[^>]*>([\s\S]*?)<\/li>/gi, (_, inner) => `${BREAK}- ${inlineFormat(inner)}`);
+                s = s.replace(/<\/p>\s*<p\b[^>]*>/gi, BREAK + BREAK);
                 s = s.replace(/<p\b[^>]*>/gi, '').replace(/<\/p>/gi, '');
-                s = s.replace(/<br\s*\/?>/gi, '\n');
+                s = s.replace(/<br\s*\/?>/gi, BREAK);
                 s = s.replace(/<strong>([\s\S]*?)<\/strong>/gi, '**$1**');
                 s = s.replace(/<b>([\s\S]*?)<\/b>/gi, '**$1**');
                 s = s.replace(/<em>([\s\S]*?)<\/em>/gi, '*$1*');
@@ -147,11 +150,13 @@ jobs:
                 s = s.replace(/<img\b[^>]*>/gi, (tag) => {
                   const src = (tag.match(/src=["']([^"']+)["']/) || [])[1] || '';
                   const alt = (tag.match(/alt=["']([^"']+)["']/) || [])[1] || 'image';
-                  return src ? `\n![${alt}](${src})\n` : '';
+                  return src ? `${BREAK}![${alt}](${src})${BREAK}` : '';
                 });
                 s = s.replace(/<[^>]+>/g, '');
                 s = decodeEntities(s);
-                return s.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/[ \t]{2,}/g, ' ').trim();
+                s = s.replace(/[ \t\r\n]+/g, ' ');
+                s = s.split(BREAK).map((part) => part.trim()).join('\n');
+                return s.replace(/\n{3,}/g, '\n\n').trim();
               };
 
               const cmsSections = [];
