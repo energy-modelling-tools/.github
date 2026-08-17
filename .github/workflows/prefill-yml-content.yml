@@ -73,7 +73,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: energy-modelling-tools/.github
-          ref: experiment/maed-plain-prefill
+          ref: main
           path: .emt-scripts
 
       - name: Build editable YAML blocks
