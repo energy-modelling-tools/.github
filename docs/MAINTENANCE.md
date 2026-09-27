@@ -28,6 +28,8 @@ Change these once and all 12 sites pick it up on their next issue:
 | `.github/workflows/update-yml-with-images.yml` | Edited boxes → data YAML → PR |
 | `.github/workflows/issue-upload-image.yml` | Standalone image uploads |
 | `.github/workflows/pr-close-cleanup.yml` | Deletes branches after PR close |
+| `.github/workflows/check-cms-markers.yml` | Weekly: finds pages the editor can no longer read |
+| `.github/scripts/check_cms_markers.py` | Marker validation for that workflow |
 | `.github/scripts/yaml_to_issue.py` | YAML → issue blocks |
 | `.github/scripts/apply_yml_issue.py` | Issue blocks → YAML, downloads images |
 | `.github/ISSUE_TEMPLATE/*.yml` | Org default issue forms |
@@ -62,6 +64,19 @@ Only CLEWs and the hub should have one.
 2. Run `propagate-issue-workflows.yml` (or wait for Monday) to install the caller
 3. Create the three labels
 4. Confirm Actions can create PRs (inherited if the org default is set)
+
+## Marker check
+
+Hand-editing a page breaks the editor quietly: a renamed marker, a missing closing
+one or a duplicate id, and those sections simply stop appearing in the edit form —
+which then reads them as deleted when someone saves. `check-cms-markers.yml` runs
+weekly, opens one issue per affected repo, updates it if the findings change, and
+closes it once the markers are healthy again. Run it against local checkouts while
+fixing something:
+
+```bash
+python3 .github/scripts/check_cms_markers.py --local /tmp/emt-osemosys /tmp/emt-maed
+```
 
 ## Round-trip test
 

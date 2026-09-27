@@ -1,0 +1,36 @@
+name: Check CMS Markers
+
+on:
+  schedule:
+    # An hour after the workflow propagation, so a fresh repo is already wired up
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/scripts/check_cms_markers.py'
+      - '.github/workflows/check-cms-markers.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.PAGE_TEMPLATE_APP_ID }}
+          private-key: ${{ secrets.PAGE_TEMPLATE_APP_PRIVATE_KEY }}
+          owner: energy-modelling-tools
+
+      - name: Report pages the editor can no longer read
+        env:
+          TOKEN: ${{ steps.app-token.outputs.token }}
+          ORG: energy-modelling-tools
+        run: python3 .github/scripts/check_cms_markers.py
