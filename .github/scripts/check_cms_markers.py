@@ -89,6 +89,10 @@ def api(token, method, url, payload=None):
             return err.code, {"message": body}
 
 
+class ReportingUnavailable(Exception):
+    """The token cannot use this repo's issues, so findings go nowhere."""
+
+
 def paginate(token, url):
     items = []
     page = 1
@@ -154,8 +158,17 @@ def issue_body(repo, findings):
     return "\n".join(lines)
 
 
+def issue_api(token, repo, method, path, payload=None):
+    status, data = api(token, method, f"https://api.github.com/repos/{repo}/{path}", payload)
+    if status in (403, 404, 410):
+        raise ReportingUnavailable(f"HTTP {status} on {path}: {data.get('message', data)}")
+    return status, data
+
+
 def existing_issue(token, repo):
-    issues = paginate(token, f"https://api.github.com/repos/{repo}/issues?state=open&per_page=100")
+    status, issues = issue_api(token, repo, "GET", "issues?state=open&per_page=100")
+    if status != 200:
+        raise RuntimeError(f"HTTP {status} listing issues on {repo}: {issues}")
     for issue in issues:
         if "pull_request" in issue:
             continue
@@ -168,8 +181,7 @@ def report(token, repo, findings):
     issue = existing_issue(token, repo)
     if not findings:
         if issue:
-            api(token, "PATCH", f"https://api.github.com/repos/{repo}/issues/{issue['number']}",
-                {"state": "closed"})
+            issue_api(token, repo, "PATCH", f"issues/{issue['number']}", {"state": "closed"})
             print(f"  closed #{issue['number']}, markers are healthy again")
         return
     body = issue_body(repo, findings)
@@ -177,13 +189,11 @@ def report(token, repo, findings):
         if (issue.get("body") or "").strip() == body.strip():
             print(f"  #{issue['number']} already says this")
             return
-        status, _ = api(token, "PATCH",
-                        f"https://api.github.com/repos/{repo}/issues/{issue['number']}",
-                        {"body": body})
+        status, _ = issue_api(token, repo, "PATCH", f"issues/{issue['number']}", {"body": body})
         print(f"  updated #{issue['number']} (HTTP {status})")
         return
-    status, created = api(token, "POST", f"https://api.github.com/repos/{repo}/issues",
-                          {"title": ISSUE_TITLE, "body": body})
+    status, created = issue_api(token, repo, "POST", "issues",
+                               {"title": ISSUE_TITLE, "body": body})
     if status == 201:
         print(f"  opened #{created['number']}")
     else:
@@ -211,6 +221,7 @@ def run_org():
     token = os.environ.get("TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
     repos = paginate(token, f"https://api.github.com/orgs/{ORG}/repos?per_page=100&type=all")
     total = 0
+    undelivered = []
     for repo in sorted(r["name"] for r in repos if not r.get("archived")):
         if repo in SKIP_REPOS:
             continue
@@ -218,8 +229,19 @@ def run_org():
         findings = check_repo(token, full)
         total += len(findings)
         print(f"{full}: {len(findings) or 'no'} page(s) with broken markers")
-        report(token, full, findings)
+        try:
+            report(token, full, findings)
+        except ReportingUnavailable as err:
+            # A repo the token cannot file issues on is only a problem if it has
+            # something to say about it.
+            print(f"  ⚠️ cannot use issues here — {err}")
+            if findings:
+                undelivered.append(full)
     print("\npages with broken markers:", total or "none  ✅")
+    if undelivered:
+        print("\nFindings that could not be reported:", ", ".join(undelivered))
+        print("Give the app Issues write access on those repos, or fix the pages by hand.")
+        return 1
     return 0
 
 

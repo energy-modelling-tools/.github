@@ -71,8 +71,9 @@ Hand-editing a page breaks the editor quietly: a renamed marker, a missing closi
 one or a duplicate id, and those sections simply stop appearing in the edit form —
 which then reads them as deleted when someone saves. `check-cms-markers.yml` runs
 weekly, opens one issue per affected repo, updates it if the findings change, and
-closes it once the markers are healthy again. Run it against local checkouts while
-fixing something:
+closes it once the markers are healthy again. Where the app token cannot use a repo's
+issues it says so and carries on; the run only fails if a repo with findings could not
+be told about them. Run it against local checkouts while fixing something:
 
 ```bash
 python3 .github/scripts/check_cms_markers.py --local /tmp/emt-osemosys /tmp/emt-maed
