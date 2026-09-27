@@ -110,6 +110,13 @@ after any change to the prefill or rebuild logic.
   above a section paired with the real `</h3>` below it, so the title box spanned both
   and saving it ate the markup in between. Heading and anchor scans match comments as
   an alternative and skip them.
+- **A prefilled issue is a snapshot, and saving it overwrites** — the boxes are only
+  as fresh as the moment prefill ran, and a section missing from the body is read as
+  a deletion. An issue prefilled while a page was broken (so prefill saw one section)
+  would have deleted the other seven on save. Prefill now stamps the body with
+  `<!-- emt:source file=… sha=… -->` and `issue-to-pr.yml` refuses the edit, with a
+  comment, when the file no longer hashes to that stamp. Issues prefilled before the
+  stamp existed carry no expectation and are still applied as before.
 - **Never write temp files into the checkout** — `create-pull-request` commits
   everything. Reports go to `EMT_REPORT_DIR` (`runner.temp`).
 - **Image download failures must not fail the run** — `resolve_media` falls back to the

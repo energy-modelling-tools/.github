@@ -41,6 +41,7 @@ Everything happens in your repository's **Issues** tab. You never touch code.
 |---|---|
 | No boxes appeared | Wait a minute and refresh. Still nothing → check you picked a file. |
 | A comment says an image could not be saved | Your text was saved and the old picture kept. Re-drag the image inside that block, no quotes around the link. |
+| A comment says the page has changed since the boxes were filled | Nothing was applied. Close the issue and open a new one for that file — the boxes come back filled with the current page. This happens when the issue sat unsaved while the page changed. |
 | The page looks wrong after merging | Open the merged Pull Request → **Revert**. The site goes back. |
 | You changed your mind before merging | Just close the Pull Request. Nothing is published. |
 
