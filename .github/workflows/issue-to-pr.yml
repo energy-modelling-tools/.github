@@ -133,6 +133,8 @@ jobs:
               console.log('✅ New content length:', newContent.length);
             }
 
+            const stamp = body.match(/<!--\s*emt:source\s+file=\S+\s+sha=([0-9a-f]+)\s*-->/i);
+            core.setOutput('sourceSha', stamp ? stamp[1] : '');
             core.setOutput('filePath', filePath);
             core.setOutput('editMode', editMode);
             core.setOutput('newContent', hasSections ? '' : newContent);
@@ -144,6 +146,46 @@ jobs:
       - name: Checkout repository
         if: steps.parse.outputs.should_run == 'true'
         uses: actions/checkout@v4
+
+      - name: Check the page has not changed since the boxes were filled
+        if: steps.parse.outputs.should_run == 'true'
+        id: freshness
+        env:
+          FILE_PATH: ${{ steps.parse.outputs.filePath }}
+          SOURCE_SHA: ${{ steps.parse.outputs.sourceSha }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const expected = process.env.SOURCE_SHA || '';
+            // Issues prefilled before this stamp existed carry no expectation.
+            if (!expected) {
+              console.log('No source stamp in the issue; skipping the freshness check');
+              return;
+            }
+            const filePath = process.env.FILE_PATH;
+            if (!fs.existsSync(filePath)) {
+              console.log('File is gone; leaving that to the steps below');
+              return;
+            }
+            const actual = require('crypto').createHash('sha256').update(fs.readFileSync(filePath, 'utf8')).digest('hex').slice(0, 12);
+            if (actual === expected) {
+              console.log('Page unchanged since the boxes were filled');
+              return;
+            }
+            console.log(`Stale edit: issue holds ${expected}, file is ${actual}`);
+            core.setOutput('stale', 'true');
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: context.issue.number,
+              body: [
+                `⚠️ **This edit was not applied: \`${filePath}\` has changed since these boxes were filled in.**`,
+                '',
+                'The boxes hold an older copy of the page. Saving them would write that older copy back, and any section missing from this issue would be deleted from the page.',
+                '',
+                'Please close this issue and open a new **Edit page content** issue for the same file. The new one is filled with what the page says now, and your change can go in there.'
+              ].join('\n')
+            });
 
       - name: Download and save images (Markdown files don't support image uploads)
         if: false
@@ -234,7 +276,7 @@ jobs:
             core.setOutput('count', savedImages.length.toString());
 
       - name: Read original file and preserve front matter
-        if: steps.parse.outputs.should_run == 'true'
+        if: steps.parse.outputs.should_run == 'true' && steps.freshness.outputs.stale != 'true'
         id: prepare
         env:
           FILE_PATH: ${{ steps.parse.outputs.filePath }}
@@ -282,7 +324,7 @@ jobs:
             }
 
       - name: Create new file content
-        if: steps.parse.outputs.should_run == 'true'
+        if: steps.parse.outputs.should_run == 'true' && steps.freshness.outputs.stale != 'true'
         env:
           FILE_PATH: ${{ steps.parse.outputs.filePath }}
           NEW_CONTENT: ${{ steps.parse.outputs.newContent }}
@@ -726,7 +768,7 @@ jobs:
             console.log(`✅ File updated: ${filePath}`);
 
       - name: Create Pull Request
-        if: steps.parse.outputs.should_run == 'true'
+        if: steps.parse.outputs.should_run == 'true' && steps.freshness.outputs.stale != 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           commit-message: "Update ${{ steps.parse.outputs.filePath }} via issue #${{ github.event.issue.number }}"

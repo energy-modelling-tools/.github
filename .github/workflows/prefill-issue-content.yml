@@ -113,6 +113,11 @@ jobs:
               let content = fs.readFileSync(filePath, 'utf8');
               console.log(`Markdown file read successfully, length: ${content.length} characters`);
 
+              // Stamp the version these boxes were filled from. issue-to-pr.yml
+              // refuses the edit if the page has moved on since, because saving
+              // would write this snapshot back over the newer page.
+              const sourceStamp = require('crypto').createHash('sha256').update(content).digest('hex').slice(0, 12);
+
               const decodeEntities = (s) => s
                 .replace(/&nbsp;/g, ' ')
                 .replace(/&amp;/g, '&')
@@ -285,7 +290,8 @@ jobs:
                 ].join('\n');
               }
 
-              const newBody = originalBody + header + prefilledContent + instructions;
+              const newBody = originalBody + header + prefilledContent + instructions
+                + `\n\n<!-- emt:source file=${filePath} sha=${sourceStamp} -->\n`;
               
               await github.rest.issues.update({
                 ...context.repo,
