@@ -101,6 +101,15 @@ after any change to the prefill or rebuild logic.
 - **New About sections must not land at `<!-- Icon Links -->`** — that comment sits
   outside the inner content column. Insert after the last section's wrapping
   `</div>` via `insertNewSectionBlock`, or the new heading looks shifted left.
+- **Only one tag owns the link box** — `<h3><a>…</a></h3>` belongs to `updateHeading`,
+  `<a><h3>…</h3></a>` to `updateWrapLink`. `updateWrapLink` used to rewrite the last
+  `<a>` before the heading whatever it was, so every save moved the *previous*
+  section's button onto this section's URL. It now bails unless the anchor is still
+  open at the heading, which is the same rule `headingAndLinkFor` uses to fill the box.
+- **Commented-out markup still matches** — a disabled `<!-- <h3 …>Title</h2> -->`
+  above a section paired with the real `</h3>` below it, so the title box spanned both
+  and saving it ate the markup in between. Heading and anchor scans match comments as
+  an alternative and skip them.
 - **Never write temp files into the checkout** — `create-pull-request` commits
   everything. Reports go to `EMT_REPORT_DIR` (`runner.temp`).
 - **Image download failures must not fail the run** — `resolve_media` falls back to the

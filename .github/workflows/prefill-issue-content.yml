@@ -159,34 +159,44 @@ jobs:
                 return s.replace(/\n{3,}/g, '\n\n').trim();
               };
 
+              // The heading and link a section inherits from the markup above it.
+              // issue-to-pr.yml writes the boxes back through the mirror image of
+              // these rules, so the two must keep agreeing on which tag owns a link.
+              const headingAndLinkFor = (content, sectionStart) => {
+                const before = content.slice(0, sectionStart);
+                // Match comments too, and ignore them: a commented-out '<h3 ...>'
+                // above the section would otherwise pair with the real '</h3>'
+                // below it and the title box would span both.
+                const notComment = (m) => m[0].slice(0, 4) !== '<!--';
+                const headings = [...before.matchAll(/<!--[\s\S]*?-->|<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi)].filter(notComment);
+                if (!headings.length) return { heading: '', link: '', headingAt: -1 };
+                const last = headings[headings.length - 1];
+                if (sectionStart - (last.index + last[0].length) >= 500) return { heading: '', link: '', headingAt: -1 };
+                let link = '';
+                const innerA = String(last[2] || '').match(/<a\b[^>]*href=["']\s*([^"']+?)\s*["'][^>]*>/i);
+                if (innerA) link = innerA[1].trim();
+                const heading = htmlToEditable(last[2])
+                  .replace(/\[([^\]]*)\]\((https?:[^)]+)\)/g, '$1')
+                  .replace(/\*\*/g, '')
+                  .replace(/\s+/g, ' ')
+                  .trim();
+                const beforeH = before.slice(0, last.index);
+                const aTags = [...beforeH.matchAll(/<!--[\s\S]*?-->|<a\b[^>]*href=["']\s*([^"']+?)\s*["'][^>]*>/gi)].filter(notComment);
+                if (aTags.length) {
+                  const a = aTags[aTags.length - 1];
+                  const afterA = beforeH.slice(a.index + a[0].length);
+                  if (!afterA.includes('</a>') && !link) link = a[1].trim();
+                }
+                // headingAt tells consecutive sections apart from ones that share a
+                // heading, and so share these boxes.
+                return { heading, link, headingAt: last.index };
+              };
+
               const cmsSections = [];
               const cmsRe = /<!--\s*CMS:section\s+id=([^\s]+)\s*-->([\s\S]*?)<!--\s*\/CMS:section\s*-->/g;
               let cmsMatch;
               while ((cmsMatch = cmsRe.exec(content)) !== null) {
-                const before = content.slice(0, cmsMatch.index);
-                const headings = [...before.matchAll(/<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi)];
-                let heading = '';
-                let link = '';
-                if (headings.length) {
-                  const last = headings[headings.length - 1];
-                  const dist = cmsMatch.index - (last.index + last[0].length);
-                  if (dist < 500) {
-                    const innerA = String(last[2] || '').match(/<a\b[^>]*href=["']\s*([^"']+?)\s*["'][^>]*>/i);
-                    if (innerA) link = innerA[1].trim();
-                    heading = htmlToEditable(last[2])
-                      .replace(/\[([^\]]*)\]\((https?:[^)]+)\)/g, '$1')
-                      .replace(/\*\*/g, '')
-                      .replace(/\s+/g, ' ')
-                      .trim();
-                    const beforeH = before.slice(0, last.index);
-                    const aTags = [...beforeH.matchAll(/<a\b[^>]*href=["']\s*([^"']+?)\s*["'][^>]*>/gi)];
-                    if (aTags.length) {
-                      const a = aTags[aTags.length - 1];
-                      const afterA = beforeH.slice(a.index + a[0].length);
-                      if (!afterA.includes('</a>') && !link) link = a[1].trim();
-                    }
-                  }
-                }
+                const { heading, link } = headingAndLinkFor(content, cmsMatch.index);
                 cmsSections.push({
                   id: cmsMatch[1].trim(),
                   heading,

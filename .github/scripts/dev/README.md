@@ -38,10 +38,12 @@ edit lost or mangled text:   none  ✅
 rather than a copy that can drift. If you rename or restructure those functions the
 extractor will fail loudly — update the patterns at the bottom of the script.
 
-`roundtrip_test.js` then checks two things for every `CMS:section` it finds:
+`roundtrip_test.js` then checks four things for every `CMS:section` it finds:
 
 1. HTML turned into editable text and back is byte-identical to the original.
 2. Appending a word keeps every other word intact.
+3. Saving the prefilled title and link boxes untouched leaves the file alone.
+4. A real title or link edit reaches its own section and no other.
 
 ## Things that have broken before
 
@@ -53,3 +55,7 @@ extractor will fail loudly — update the patterns at the bottom of the script.
   the HTML, so the two sides need different normalisation.
 - New About sections inserted at `<!-- Icon Links -->` sit outside the inner content
   column and look shifted left. They must follow the last existing section.
+- The link box was written back to the last `<a>` before the heading, which on these
+  pages is the previous section's button, so every save shifted the buttons by one.
+- A commented-out `<h3 ...>` above a section paired with the real `</h3>` below it and
+  the title box swallowed everything in between.
