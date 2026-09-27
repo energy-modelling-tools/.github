@@ -594,16 +594,26 @@ jobs:
                 return safe;
               };
 
+              // Match comments too, and ignore them: a commented-out '<h3 ...>'
+              // above a section would otherwise pair with the real '</h3>' below it,
+              // and rewriting that span eats the markup in between.
+              const lastHeadingBefore = (text) => {
+                const re = /<!--[\s\S]*?-->|<h[1-6]\b[^>]*>[\s\S]*?<\/h[1-6]>/gi;
+                let last = null;
+                let m;
+                while ((m = re.exec(text))) {
+                  if (m[0].slice(0, 4) !== '<!--') last = m;
+                }
+                return last;
+              };
+
               const updateHeading = (fileContent, sectionId, newHeading, newHref) => {
                 if (!newHeading || newHeading === '[' || newHeading === ']') return fileContent;
                 const marker = '<!-- CMS:section id=' + sectionId + ' -->';
                 const idx = fileContent.indexOf(marker);
                 if (idx < 0) return fileContent;
                 const before = fileContent.slice(0, idx);
-                const hRe = /<h[1-6]\b[^>]*>[\s\S]*?<\/h[1-6]>/gi;
-                let last = null;
-                let m;
-                while ((m = hRe.exec(before))) last = m;
+                const last = lastHeadingBefore(before);
                 if (!last) {
                   const inserted = '<h2 class="aboutpage-subtitle text-left mb-3 mt-lg-6">' + escapeHtml(newHeading) + '</h2>\n' + marker;
                   return fileContent.slice(0, idx) + inserted + fileContent.slice(idx + marker.length);
@@ -611,7 +621,10 @@ jobs:
                 if (idx - (last.index + last[0].length) > 500) return fileContent;
                 const currentInner = (last[0].match(/<h[1-6]\b[^>]*>([\s\S]*)<\/h[1-6]>/i) || ['', ''])[1];
                 const currentHref = (last[0].match(/href=["']\s*([^"']+?)\s*["']/i) || [])[1] || '';
-                if (headingText(currentInner, false) === headingText(newHeading, true) && (!newHref || newHref === currentHref)) {
+                // Without an anchor of its own the heading cannot carry the link box;
+                // it belongs to a wrapping anchor and updateWrapLink owns it.
+                const ownsLink = /<a\b/i.test(currentInner);
+                if (headingText(currentInner, false) === headingText(newHeading, true) && (!newHref || !ownsLink || newHref === currentHref)) {
                   return fileContent;
                 }
                 const innerHtml = headingInnerToHtml(newHeading, last[0], newHref);
@@ -619,26 +632,33 @@ jobs:
                 return fileContent.slice(0, last.index) + replaced + fileContent.slice(last.index + last[0].length);
               };
 
+              // Only for the `<a><h3>...</h3></a>` shape, where the link sits outside
+              // the heading. An anchor inside the heading belongs to updateHeading,
+              // and an anchor that closes before the heading is a neighbouring
+              // button: rewriting it moved the previous section's link.
               const updateWrapLink = (fileContent, sectionId, newHref) => {
                 if (!newHref) return fileContent;
                 const marker = '<!-- CMS:section id=' + sectionId + ' -->';
                 const idx = fileContent.indexOf(marker);
                 if (idx < 0) return fileContent;
                 const before = fileContent.slice(0, idx);
-                const hRe = /<h[1-6]\b[^>]*>[\s\S]*?<\/h[1-6]>/gi;
-                let lastH = null;
-                let m;
-                while ((m = hRe.exec(before))) lastH = m;
-                const searchEnd = lastH ? lastH.index : idx;
-                const searchFrom = Math.max(0, searchEnd - 800);
-                const slice = fileContent.slice(searchFrom, searchEnd);
-                const aRe = /<a\b[^>]*href=["']\s*([^"']+)\s*["'][^>]*>/gi;
+                const lastH = lastHeadingBefore(before);
+                if (!lastH) return fileContent;
+                if (idx - (lastH.index + lastH[0].length) > 500) return fileContent;
+                const headingInner = (lastH[0].match(/<h[1-6]\b[^>]*>([\s\S]*)<\/h[1-6]>/i) || ['', ''])[1];
+                if (/<a\b/i.test(headingInner)) return fileContent;
+                const beforeH = fileContent.slice(0, lastH.index);
+                const aRe = /<!--[\s\S]*?-->|<a\b[^>]*href=["']\s*([^"']+?)\s*["'][^>]*>/gi;
                 let lastA = null;
-                while ((m = aRe.exec(slice))) lastA = m;
+                let m;
+                while ((m = aRe.exec(beforeH))) {
+                  if (m[0].slice(0, 4) !== '<!--') lastA = m;
+                }
                 if (!lastA) return fileContent;
-                const abs = searchFrom + lastA.index;
+                if (beforeH.slice(lastA.index + lastA[0].length).includes('</a>')) return fileContent;
+                if (lastA[1].trim() === String(newHref).trim()) return fileContent;
                 const newTag = lastA[0].replace(/href=["']\s*[^"']+\s*["']/, 'href="' + newHref + '"');
-                return fileContent.slice(0, abs) + newTag + fileContent.slice(abs + lastA[0].length);
+                return fileContent.slice(0, lastA.index) + newTag + fileContent.slice(lastA.index + lastA[0].length);
               };
 
               for (const [id, section] of Object.entries(updates)) {
