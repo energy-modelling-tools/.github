@@ -1,3 +1,8 @@
+# emt:managed-template
+# Source of truth: energy-modelling-tools/.github. propagate-issue-workflows.yml
+# overwrites copies of this form in repos that keep their own
+# .github/ISSUE_TEMPLATE/. To customise it for one site, delete the marker line
+# above and the sync will leave your copy alone.
 name: "Edit YAML file"
 description: "Edit EMP cards, papers, partner logos, or social links. Drag photos into the issue after it opens."
 title: "YAML Edit: "
