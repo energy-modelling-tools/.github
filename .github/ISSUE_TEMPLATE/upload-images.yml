@@ -1,3 +1,8 @@
+# emt:managed-template
+# Source of truth: energy-modelling-tools/.github. propagate-issue-workflows.yml
+# overwrites copies of this form in repos that keep their own
+# .github/ISSUE_TEMPLATE/. To customise it for one site, delete the marker line
+# above and the sync will leave your copy alone.
 name: "Upload Images"
 description: "Upload images/files into the repository via GitHub Issues"
 title: "Upload Images: "

@@ -6,6 +6,7 @@ on:
     paths:
       - 'workflow-templates/issue-content-handler.yml'
       - '.github/workflows/propagate-issue-workflows.yml'
+      - '.github/ISSUE_TEMPLATE/*.yml'
   schedule:
     # Re-sync the caller workflow weekly so new org repos pick it up
     - cron: '0 3 * * 1'
@@ -29,7 +30,7 @@ jobs:
           private-key: ${{ secrets.PAGE_TEMPLATE_APP_PRIVATE_KEY }}
           owner: energy-modelling-tools
 
-      - name: Propagate calling workflow to org repos
+      - name: Propagate calling workflow and managed issue forms to org repos
         env:
           TOKEN: ${{ steps.app-token.outputs.token }}
           ORG: energy-modelling-tools
@@ -45,8 +46,20 @@ jobs:
           COMMIT_MSG = "Add/update issue content handler workflow from org template"
           SKIP_REPOS = {".github", "page-template"}
 
-          with open(WORKFLOW_FILE, "rb") as f:
-              content = base64.b64encode(f.read()).decode("ascii")
+          # A repo holding its own .github/ISSUE_TEMPLATE/ no longer inherits the
+          # org defaults, so its forms are synced from here instead - but only the
+          # ones still carrying MANAGED_MARKER. CLEWs and the hub list their own
+          # data files in theirs, so those copies are left alone.
+          TEMPLATE_DIR = ".github/ISSUE_TEMPLATE"
+          MANAGED_TEMPLATES = ["edit-content.yml", "edit-yml.yml", "upload-images.yml"]
+          MANAGED_MARKER = "# emt:managed-template"
+
+          def read_b64(path):
+              with open(path, "rb") as f:
+                  return base64.b64encode(f.read()).decode("ascii")
+
+          content = read_b64(WORKFLOW_FILE)
+          templates = {name: read_b64(f"{TEMPLATE_DIR}/{name}") for name in MANAGED_TEMPLATES}
 
           headers = {
               "Authorization": f"Bearer {TOKEN}",
@@ -111,6 +124,47 @@ jobs:
           print(f"Syncing {TARGET_PATH} to {len(targets)} repos")
 
           failures = {}
+
+          def sync_managed_templates(repo):
+              status, listing = api("GET", contents_url(repo, TEMPLATE_DIR))
+              if status == 404:
+                  print(f"   ↪️  {repo} inherits the org issue forms")
+                  return
+              if status != 200:
+                  print(f"   ❌ Failed to list {TEMPLATE_DIR} in {repo} (HTTP {status}): {listing}")
+                  failures[f"{repo}:{TEMPLATE_DIR}"] = f"GET HTTP {status}: {listing}"
+                  return
+              local = {item.get("name") for item in listing if isinstance(item, dict)}
+              for name in MANAGED_TEMPLATES:
+                  path = f"{TEMPLATE_DIR}/{name}"
+                  if name not in local:
+                      print(f"   ⚠️  {repo} keeps its own forms but has no {name}; add it by hand if that form is wanted")
+                      continue
+                  url = contents_url(repo, path)
+                  status, existing = api("GET", url)
+                  if status != 200:
+                      print(f"   ❌ Failed to read {path} in {repo} (HTTP {status}): {existing}")
+                      failures[f"{repo}:{path}"] = f"GET HTTP {status}: {existing}"
+                      continue
+                  encoded = existing.get("content", "").replace("\n", "")
+                  current = base64.b64decode(encoded).decode("utf-8", errors="replace")
+                  if MANAGED_MARKER not in current:
+                      print(f"   🔒 {repo} has a local variant of {name}; leaving it alone")
+                      continue
+                  if encoded == templates[name]:
+                      print(f"   ⏭️  {name} already current in {repo}")
+                      continue
+                  put_status, put_body = api("PUT", url, {
+                      "message": f"Update {name} issue form from org template",
+                      "content": templates[name],
+                      "sha": existing.get("sha"),
+                  })
+                  if put_status in (200, 201):
+                      print(f"   ✅ Updated {path} in {repo}")
+                  else:
+                      print(f"   ❌ Failed to update {path} in {repo} (HTTP {put_status}): {put_body}")
+                      failures[f"{repo}:{path}"] = f"PUT HTTP {put_status}: {put_body}"
+
           for repo in targets:
               url = contents_url(repo, TARGET_PATH)
               sha = None
@@ -158,6 +212,8 @@ jobs:
                   else:
                       print(f"❌ Failed to remove {LEGACY_PATH} from {repo} (HTTP {del_status}): {del_body}")
                       failures[repo] = f"DELETE HTTP {del_status}: {del_body}"
+
+              sync_managed_templates(repo)
 
           if failures:
               print("\nFailed repos and reasons:")

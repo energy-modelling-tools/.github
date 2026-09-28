@@ -42,12 +42,18 @@ The Python scripts are checked out at runtime from `.github@main` into `.emt-scr
 |---|---|---|
 | `.github/workflows/issue-content-handler.yml` | GitHub requires the caller in the repo | `propagate-issue-workflows.yml` pushes it from `workflow-templates/`; runs on push, weekly Monday 03:00, or `workflow_dispatch` |
 | `<!-- CMS:section -->` markers in pages | Per-site content | `.github/scripts/add_cms_markers.py <files>`, then review the diff |
-| CLEWs and hub issue templates | Different data filenames | Local `.github/ISSUE_TEMPLATE/` overrides the org default |
+| CLEWs and hub issue templates | Different data filenames | Local `.github/ISSUE_TEMPLATE/` overrides the org default; theirs are deliberate variants, so the sync leaves them alone |
 | Labels `content-edit`, `yml-edit`, `upload-image` | Repo-level | `gh label create` per repo |
 | Actions permissions | Repo-level | Set org-wide: Org Settings → Actions → General → Workflow permissions → "Read and write" + "Allow GitHub Actions to create and approve pull requests" |
 
-**A repo with its own `.github/ISSUE_TEMPLATE/` stops receiving org template updates.**
-Only CLEWs and the hub should have one.
+**A repo with its own `.github/ISSUE_TEMPLATE/` stops inheriting the org defaults.**
+CLEWs, the hub, and OSeMOSYS have one: the first two need variant wording, OSeMOSYS
+carries its own `register-project.yml` for the Project Registry. For them,
+`propagate-issue-workflows.yml` syncs the editor forms directly into the repo, but
+only the copies whose first line is `# emt:managed-template`. Delete that line to
+keep a local variant — that is why CLEWs' and the hub's copies are never touched.
+A repo with its own directory but missing one of the managed forms is reported as a
+warning, not fixed automatically; add it by hand if that form is wanted there.
 
 ## Site-specific notes
 
